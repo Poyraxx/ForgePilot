@@ -167,6 +167,29 @@ test('built-in tools can write, read, patch, search, and delete files', async ()
   await assert.rejects(() => fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'));
 });
 
+test('fs_patch can replace an entire file when oldText is empty', async () => {
+  const workspaceRoot = await createWorkspace();
+  const registry = new ToolRegistry(createBuiltInTools());
+  const context = createContext(workspaceRoot);
+
+  await registry.execute(
+    'fs_write',
+    { path: 'notes.txt', content: 'alpha\nbeta\ngamma' },
+    context
+  );
+
+  const patchResult = await registry.execute(
+    'fs_patch',
+    { path: 'notes.txt', oldText: '', newText: 'completely replaced' },
+    context
+  );
+
+  assert.equal(patchResult.fullReplace, true);
+
+  const readResult = await registry.execute('fs_read', { path: 'notes.txt' }, context);
+  assert.equal(readResult.content, 'completely replaced');
+});
+
 test('fs_read reports a helpful error for missing files', async () => {
   const workspaceRoot = await createWorkspace();
   const registry = new ToolRegistry(createBuiltInTools());

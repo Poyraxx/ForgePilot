@@ -178,6 +178,8 @@ function buildEmulationSystemPrompt(tools, workspaceRoot, knownPaths = []) {
     'Only use a path after you have seen that exact path in a prior tool result.',
     'If an attached file was copied into the workspace, its old absolute source location is invalid. Reuse only the copied workspace path shown in context.',
     'If you need to discover files, use fs_list or search_text first and then read only returned paths.',
+    'Use fs_patch only when you already know the exact existing text from fs_read.',
+    'If you want to replace an entire file, prefer fs_write instead of fs_patch.',
     'If you need current public web information, use web_search first and then web_fetch one of the returned URLs.',
     'Do not repeat the same exploratory tool call if the previous result already gave enough context.',
     'If a tool reports that a path was not found, choose a different path from prior tool output instead of guessing.',

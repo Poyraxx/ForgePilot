@@ -125,7 +125,20 @@ async function fetchText(url, { fetchImpl, signal, timeoutMs = DEFAULT_TIMEOUT_M
     const text = await response.text();
 
     if (!response.ok) {
-      throw new Error(`Web request failed with status ${response.status}.`);
+      const finalUrl = response.url || url;
+      if (response.status === 403) {
+        throw new Error(
+          `Web request was blocked with status 403 at ${finalUrl}. The site may require a real browser or anti-bot clearance. Try web_search and fetch a different source.`
+        );
+      }
+
+      if (response.status === 404) {
+        throw new Error(
+          `Web request failed with status 404 at ${finalUrl}. The page may have moved or been removed. Try web_search to find an updated URL.`
+        );
+      }
+
+      throw new Error(`Web request failed with status ${response.status} at ${finalUrl}.`);
     }
 
     return { response, text };

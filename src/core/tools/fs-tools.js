@@ -242,7 +242,8 @@ export function createFileTools() {
     }),
     createToolDefinition({
       name: 'fs_patch',
-      description: 'Replace part of a file by matching exact text.',
+      description:
+        'Replace part of a file by matching exact text. If oldText is an empty string, replace the entire file with newText.',
       inputSchema: {
         type: 'object',
         required: ['path', 'oldText', 'newText'],
@@ -257,22 +258,34 @@ export function createFileTools() {
       mutatesWorkspace: true,
       async handler(context, args) {
         throwIfAborted(context.signal, 'File patch stopped by user.');
-        if (!args.oldText) {
-          throw new Error('fs_patch requires a non-empty oldText value.');
-        }
-
         const targetPath = resolveWorkspacePath(context.workspaceRoot, args.path);
         const previousContent = await fs.readFile(targetPath, 'utf8');
+        const oldText = typeof args.oldText === 'string' ? args.oldText : '';
+        const newText = String(args.newText ?? '');
+
+        if (oldText === '') {
+          await fs.writeFile(targetPath, newText, 'utf8');
+
+          return {
+            path: relativizeWorkspacePath(context.workspaceRoot, targetPath),
+            replacements: previousContent === newText ? 0 : 1,
+            fullReplace: true,
+            diff: createUnifiedDiff(previousContent, newText, args.path),
+          };
+        }
+
         const replaceAll = Boolean(args.replaceAll);
-        const occurrences = previousContent.split(String(args.oldText)).length - 1;
+        const occurrences = previousContent.split(oldText).length - 1;
 
         if (occurrences === 0) {
-          throw new Error(`Text was not found in "${args.path}".`);
+          throw new Error(
+            `Text was not found in "${args.path}". Read the file with fs_read first and patch an exact excerpt, or use fs_write if you want to replace the whole file.`
+          );
         }
 
         const nextContent = replaceAll
-          ? previousContent.split(String(args.oldText)).join(String(args.newText))
-          : previousContent.replace(String(args.oldText), String(args.newText));
+          ? previousContent.split(oldText).join(newText)
+          : previousContent.replace(oldText, newText);
 
         await fs.writeFile(targetPath, nextContent, 'utf8');
 
