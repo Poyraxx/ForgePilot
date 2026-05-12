@@ -1,6 +1,7 @@
 # ForgePilot
 
 ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It provides a chat UI, a multi-provider runtime, built-in file and terminal tools, MCP support, web research tools, and document ingestion for PDFs and office files.
+[DEMO](https://www.youtube.com/watch?v=wBWoxGxW-gI)
 
 
 ![ForgePilot](https://i.hizliresim.com/a9coyvb.png)
