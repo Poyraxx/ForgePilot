@@ -10,6 +10,7 @@ const currentDir = path.dirname(currentFile);
 const appRoot = path.resolve(currentDir, '..', '..');
 const rendererEntry = path.join(appRoot, 'src', 'renderer', 'index.html');
 const preloadEntry = path.join(currentDir, 'preload.js');
+const appIconEntry = path.join(appRoot, 'ChatGPT Image 12 May 2026 20_29_11.ico');
 
 const sessionService = new SessionService({ appRoot });
 const managedWindowStates = new WeakMap();
@@ -178,6 +179,7 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#111317',
     title: 'ForgePilot',
+    icon: appIconEntry,
     webPreferences: {
       preload: preloadEntry,
       contextIsolation: true,

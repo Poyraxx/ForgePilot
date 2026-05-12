@@ -31,6 +31,7 @@
       "src/**/*",
       "scripts/**/*",
       "plugins/**/*",
+      "ChatGPT Image 12 May 2026 20_29_11.ico",
       "package.json",
       "README.md",
       "!test{,/**/*}",
@@ -43,6 +44,7 @@
     ],
     "asar": true,
     "win": {
+      "icon": "ChatGPT Image 12 May 2026 20_29_11.ico",
       "signAndEditExecutable": false,
       "target": [
         {
