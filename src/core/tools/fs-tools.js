@@ -242,8 +242,7 @@ export function createFileTools() {
     }),
     createToolDefinition({
       name: 'fs_patch',
-      description:
-        'Replace part of a file by matching exact text. If oldText is an empty string, replace the entire file with newText.',
+      description: 'Replace part of a file by matching exact text.',
       inputSchema: {
         type: 'object',
         required: ['path', 'oldText', 'newText'],
@@ -264,14 +263,9 @@ export function createFileTools() {
         const newText = String(args.newText ?? '');
 
         if (oldText === '') {
-          await fs.writeFile(targetPath, newText, 'utf8');
-
-          return {
-            path: relativizeWorkspacePath(context.workspaceRoot, targetPath),
-            replacements: previousContent === newText ? 0 : 1,
-            fullReplace: true,
-            diff: createUnifiedDiff(previousContent, newText, args.path),
-          };
+          throw new Error(
+            'fs_patch requires a non-empty oldText value. Read the file first and patch an exact excerpt, or use fs_write if you want to replace the whole file.'
+          );
         }
 
         const replaceAll = Boolean(args.replaceAll);
