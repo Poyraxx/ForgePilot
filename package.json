@@ -1,0 +1,62 @@
+{
+  "name": "forgepilot",
+  "version": "0.1.0",
+  "description": "Desktop agent workspace for local and hosted LLMs with tool calling, MCP, and document support.",
+  "productName": "ForgePilot",
+  "author": "ForgePilot",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "node scripts/start-electron.mjs",
+    "dev": "node scripts/start-electron.mjs",
+    "test": "node --test",
+    "test:acceptance": "node --test test/ollama-acceptance.test.js",
+    "pack": "electron-builder --dir",
+    "build:win": "electron-builder --win portable"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "electron": "^35.5.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.forgepilot.desktop",
+    "productName": "ForgePilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "scripts/**/*",
+      "plugins/**/*",
+      "package.json",
+      "README.md",
+      "!test{,/**/*}",
+      "!fixtures{,/**/*}",
+      "!release{,/**/*}",
+      "!dist{,/**/*}",
+      "!out{,/**/*}",
+      "!build{,/**/*}",
+      "!.cokgizlicoder{,/**/*}"
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

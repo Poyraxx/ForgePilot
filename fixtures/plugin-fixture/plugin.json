@@ -1,0 +1,28 @@
+{
+  "name": "fixture-echo",
+  "description": "Fixture plugin for tests.",
+  "command": "node",
+  "args": [
+    "${pluginDir}/worker.mjs"
+  ],
+  "tools": [
+    {
+      "name": "fixture_echo",
+      "description": "Echo text for tests.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "riskLevel": "low",
+      "mutatesWorkspace": false,
+      "requiresApproval": false
+    }
+  ]
+}
