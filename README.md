@@ -1,6 +1,6 @@
 # ForgePilot
 
-ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It provides a Codex/Cursor-style chat UI, a multi-provider runtime, built-in file and terminal tools, MCP support, web research tools, and document ingestion for PDFs and office files.
+ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It provides a chat UI, a multi-provider runtime, built-in file and terminal tools, MCP support, web research tools, and document ingestion for PDFs and office files.
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
@@ -46,7 +46,6 @@ The core design goal is simple: even if a model does not support native tool cal
 ## Desktop UX
 
 - Custom top chrome with app-style controls
-- Codex-inspired left rail, thread center, and progress panel
 - Composer with provider, permission, model, and attachment controls
 - Live progress feed for tool execution
 - Approval flow for risky tools in `ask` mode
