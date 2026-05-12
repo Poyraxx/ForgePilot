@@ -163,11 +163,6 @@ $env:RUN_OLLAMA_ACCEPTANCE='1'
 node --test test/ollama-acceptance.test.js
 ```
 
-Expected local models:
-
-- `qwen3-coder-next:latest`
-- `huihui_ai/qwen3-coder-abliterated:latest`
-
 ## Known Limits
 
 - Hosted provider support depends on the target endpoint correctly implementing its API contract
