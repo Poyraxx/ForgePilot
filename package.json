@@ -16,9 +16,9 @@
     "test": "node --test",
     "test:acceptance": "node --test test/ollama-acceptance.test.js",
     "pack": "electron-builder --dir",
-    "build:win": "electron-builder --win portable",
-    "build:mac": "electron-builder --mac dmg zip --x64 --arm64",
-    "build:linux": "electron-builder --linux AppImage deb --x64"
+    "build:win": "electron-builder --win portable --publish never",
+    "build:mac": "electron-builder --mac dmg zip --x64 --arm64 --publish never",
+    "build:linux": "electron-builder --linux AppImage deb --x64 --publish never"
   },
   "engines": {
     "node": ">=24"
