@@ -50,7 +50,6 @@ The core design goal is simple: even if a model does not support native tool cal
 ## Desktop UX
 
 - Custom top chrome with app-style controls
-- Codex-inspired left rail, thread center, and progress panel
 - Composer with provider, permission, model, and attachment controls
 - Live progress feed for tool execution
 - Approval flow for risky tools in `ask` mode
@@ -235,11 +234,6 @@ To run the real Ollama acceptance flow:
 $env:RUN_OLLAMA_ACCEPTANCE='1'
 node --test test/ollama-acceptance.test.js
 ```
-
-Expected local models:
-
-- `qwen3-coder-next:latest`
-- `huihui_ai/qwen3-coder-abliterated:latest`
 
 ## Known Limits
 
