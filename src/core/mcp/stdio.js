@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 import { bindAbortSignal, createAbortError, isAbortError, throwIfAborted } from '../abort.js';
+import { getDetachedSpawnOption, terminateProcessTree } from '../process-tree.js';
 
 const MCP_PROTOCOL_VERSION = '2025-11-25';
 const CLIENT_INFO = {
@@ -106,6 +107,7 @@ class McpProcessClient {
       cwd: this.cwd,
       env: this.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: getDetachedSpawnOption(),
     });
 
     this.process.stdout.setEncoding('utf8');
@@ -256,7 +258,7 @@ class McpProcessClient {
     this.closed = true;
 
     if (this.process && !this.process.killed) {
-      this.process.kill();
+      terminateProcessTree(this.process);
     }
 
     for (const pending of this.pending.values()) {

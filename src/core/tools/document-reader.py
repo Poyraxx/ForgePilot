@@ -193,6 +193,14 @@ def main() -> int:
 
     try:
         payload = extract(file_path)
+    except ModuleNotFoundError as error:
+        missing_module = getattr(error, "name", None) or "required Python module"
+        print(
+            f"Structured document reading is missing the Python module '{missing_module}'. "
+            "Install the dependencies from requirements-docs.txt and try again.",
+            file=sys.stderr,
+        )
+        return 1
     except Exception as error:  # noqa: BLE001
         print(str(error), file=sys.stderr)
         return 1

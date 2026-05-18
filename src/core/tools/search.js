@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { bindAbortSignal, createAbortError, isAbortError, throwIfAborted } from '../abort.js';
 import { createToolDefinition } from '../contracts.js';
 import { relativizeWorkspacePath, resolveWorkspacePath } from '../path-guard.js';
+import { getDetachedSpawnOption, terminateProcessTree } from '../process-tree.js';
 import { resolveAttachmentAwareWorkspacePath } from './attachment-paths.js';
 
 function normalizeResultPath(value) {
@@ -30,7 +31,7 @@ function collectProcess(childProcess, { allowNonZero = false, signal } = {}) {
 
     const disposeAbort = bindAbortSignal(signal, () => {
       aborted = true;
-      childProcess.kill();
+      terminateProcessTree(childProcess);
     });
 
     childProcess.stdout.on('data', (chunk) => {
@@ -79,6 +80,7 @@ async function searchWithRipgrep(workspaceRoot, args, signal) {
   const child = spawn('rg', rgArgs, {
     cwd: workspaceRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: getDetachedSpawnOption(),
   });
 
   const { stdout } = await collectProcess(child, { allowNonZero: true, signal });

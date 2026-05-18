@@ -259,6 +259,84 @@ function extractHtmlTitle(rawHtml) {
   return stripTags(titleMatch?.[1] ?? '');
 }
 
+function extractMetaDescription(rawHtml) {
+  const match = String(rawHtml).match(
+    /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([\s\S]*?)["'][^>]*>/i
+  );
+  return stripTags(match?.[1] ?? '');
+}
+
+function extractCanonicalUrl(rawHtml, baseUrl) {
+  const match = String(rawHtml).match(
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([\s\S]*?)["'][^>]*>/i
+  );
+  const rawValue = decodeHtmlEntities(match?.[1] ?? '').trim();
+
+  if (!rawValue) {
+    return baseUrl;
+  }
+
+  try {
+    return new URL(rawValue, baseUrl).toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+function extractHtmlHeadings(rawHtml, limit = 12) {
+  const headings = [];
+  const pattern = /<(h[1-6])[^>]*>([\s\S]*?)<\/\1>/gi;
+  let match;
+
+  while ((match = pattern.exec(String(rawHtml))) && headings.length < limit) {
+    const text = stripTags(match[2]);
+    if (!text) {
+      continue;
+    }
+
+    headings.push({
+      level: Number(match[1][1]),
+      text,
+    });
+  }
+
+  return headings;
+}
+
+function extractHtmlLinks(rawHtml, baseUrl, limit = 12) {
+  const links = [];
+  const seen = new Set();
+  const pattern = /<a[^>]+href=["']([\s\S]*?)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+
+  while ((match = pattern.exec(String(rawHtml))) && links.length < limit) {
+    const href = decodeHtmlEntities(match[1]).trim();
+    const text = stripTags(match[2]);
+    if (!href) {
+      continue;
+    }
+
+    let url = href;
+    try {
+      url = new URL(href, baseUrl).toString();
+    } catch {
+      continue;
+    }
+
+    if (seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    links.push({
+      text: text || url,
+      url,
+    });
+  }
+
+  return links;
+}
+
 function htmlToText(rawHtml = '') {
   return decodeHtmlEntities(
     String(rawHtml)
@@ -306,16 +384,25 @@ async function fetchWebPage(fetchImpl, args, signal) {
   });
   const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
   const isHtml = contentType.includes('text/html');
+  const finalUrl = response.url || parsedUrl.toString();
   const title = isHtml ? extractHtmlTitle(text) || parsedUrl.hostname : parsedUrl.hostname;
   const content = isHtml ? htmlToText(text) : text.trim();
+  const description = isHtml ? extractMetaDescription(text) : '';
+  const canonicalUrl = isHtml ? extractCanonicalUrl(text, finalUrl) : finalUrl;
+  const headings = isHtml ? extractHtmlHeadings(text) : [];
+  const links = isHtml ? extractHtmlLinks(text, finalUrl) : [];
 
   return {
-    url: response.url || parsedUrl.toString(),
+    url: finalUrl,
     title,
+    description,
+    canonicalUrl,
     content: content.slice(0, maxChars),
     contentType,
     totalChars: content.length,
     truncated: content.length > maxChars,
+    headings,
+    links,
   };
 }
 
@@ -357,6 +444,10 @@ export function createWebTools({ fetchImpl = globalThis.fetch } = {}) {
 
 export const __testables = {
   decodeHtmlEntities,
+  extractCanonicalUrl,
+  extractHtmlHeadings,
+  extractHtmlLinks,
+  extractMetaDescription,
   htmlToText,
   parseDuckDuckGoHtml,
   unwrapDuckDuckGoUrl,

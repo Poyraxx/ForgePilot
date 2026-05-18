@@ -2,20 +2,19 @@ import { spawn } from 'node:child_process';
 
 import { bindAbortSignal, createAbortError, throwIfAborted } from '../abort.js';
 import { createToolDefinition, RiskLevel } from '../contracts.js';
+import { resolveShellCandidates } from '../platform.js';
+import { getDetachedSpawnOption, terminateProcessTree } from '../process-tree.js';
 
-function runShellCommand(command, workspaceRoot, timeoutMs, signal) {
+function runCommandWithShell(shell, command, workspaceRoot, timeoutMs, signal) {
   return new Promise((resolve, reject) => {
     throwIfAborted(signal, 'Command stopped by user.');
-    const executable = process.platform === 'win32' ? 'powershell.exe' : 'bash';
-    const args =
-      process.platform === 'win32'
-        ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
-        : ['-lc', command];
+    const args = [...shell.args, command];
 
-    const child = spawn(executable, args, {
+    const child = spawn(shell.command, args, {
       cwd: workspaceRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
+      detached: getDetachedSpawnOption(),
     });
 
     let stdout = '';
@@ -37,12 +36,12 @@ function runShellCommand(command, workspaceRoot, timeoutMs, signal) {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminateProcessTree(child);
     }, timeoutMs);
 
     const disposeAbort = bindAbortSignal(signal, () => {
       aborted = true;
-      child.kill();
+      terminateProcessTree(child);
     });
 
     child.stdout.on('data', (chunk) => {
@@ -72,6 +71,35 @@ function runShellCommand(command, workspaceRoot, timeoutMs, signal) {
       });
     });
   });
+}
+
+async function runShellCommand(command, workspaceRoot, timeoutMs, signal) {
+  const candidates = resolveShellCandidates();
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      return await runCommandWithShell(candidate, command, workspaceRoot, timeoutMs, signal);
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message ?? '');
+      const isMissingShell =
+        error?.code === 'ENOENT' ||
+        /spawn .* ENOENT/i.test(message) ||
+        /not found/i.test(message);
+
+      if (isMissingShell) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error('No supported shell was found. Install PowerShell, bash, or sh to use run_command.')
+  );
 }
 
 export function createCommandTool() {

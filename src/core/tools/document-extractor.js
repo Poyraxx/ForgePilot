@@ -5,9 +5,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { bindAbortSignal, createAbortError, throwIfAborted } from '../abort.js';
+import { resolveExternalScriptPath } from '../platform.js';
+import { getDetachedSpawnOption, terminateProcessTree } from '../process-tree.js';
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DOCUMENT_READER_SCRIPT = path.join(TOOL_DIR, 'document-reader.py');
+const DOCUMENT_READER_SCRIPT = resolveExternalScriptPath(path.join(TOOL_DIR, 'document-reader.py'));
 const STRUCTURED_DOCUMENT_FORMATS = new Map([
   ['.pdf', 'pdf'],
   ['.docx', 'docx'],
@@ -38,6 +40,9 @@ function uniqueCandidates(candidates) {
 
 function buildPythonCandidates() {
   const explicitPath = process.env.COKGIZLICODER_PYTHON_PATH ?? process.env.CODEX_PYTHON_PATH;
+  const packagedBase = process.resourcesPath
+    ? path.join(process.resourcesPath, 'python')
+    : null;
   const bundledBase = path.join(
     os.homedir(),
     '.cache',
@@ -46,6 +51,15 @@ function buildPythonCandidates() {
     'dependencies',
     'python'
   );
+  const packagedCandidates =
+    !packagedBase
+      ? []
+      : process.platform === 'win32'
+        ? [{ command: path.join(packagedBase, 'python.exe'), args: [] }]
+        : [
+            { command: path.join(packagedBase, 'bin', 'python3'), args: [] },
+            { command: path.join(packagedBase, 'python3'), args: [] },
+          ];
   const bundledCandidates =
     process.platform === 'win32'
       ? [{ command: path.join(bundledBase, 'python.exe'), args: [] }]
@@ -67,6 +81,7 @@ function buildPythonCandidates() {
   return uniqueCandidates(
     [
       explicitPath ? { command: explicitPath, args: [] } : null,
+      ...packagedCandidates,
       ...bundledCandidates,
       ...fallbackCandidates,
     ].filter(Boolean)
@@ -173,6 +188,7 @@ export async function extractStructuredDocumentText(targetPath, signal) {
         ...process.env,
         PYTHONIOENCODING: 'utf-8',
       },
+      detached: getDetachedSpawnOption(),
     });
 
     let stdout = '';
@@ -192,7 +208,7 @@ export async function extractStructuredDocumentText(targetPath, signal) {
 
     const disposeAbort = bindAbortSignal(signal, () => {
       aborted = true;
-      child.kill();
+      terminateProcessTree(child);
     });
 
     child.stdout.on('data', (chunk) => {

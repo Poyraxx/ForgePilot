@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Menu, app, BrowserWindow, dialog, ipcMain, screen } from 'electron';
 
+import { resolveAppIconPath } from '../core/platform.js';
 import { SessionService } from './session-service.js';
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -10,7 +11,7 @@ const currentDir = path.dirname(currentFile);
 const appRoot = path.resolve(currentDir, '..', '..');
 const rendererEntry = path.join(appRoot, 'src', 'renderer', 'index.html');
 const preloadEntry = path.join(currentDir, 'preload.js');
-const appIconEntry = path.join(appRoot, 'ChatGPT Image 12 May 2026 20_29_11.ico');
+const appIconEntry = resolveAppIconPath(appRoot);
 
 const sessionService = new SessionService({ appRoot });
 const managedWindowStates = new WeakMap();
@@ -169,24 +170,34 @@ function emitWindowState(window) {
 }
 
 function createWindow() {
-  const window = new BrowserWindow({
+  const windowOptions = {
     width: 1480,
     height: 980,
     minWidth: 1180,
     minHeight: 760,
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     backgroundColor: '#111317',
     title: 'ForgePilot',
-    icon: appIconEntry,
     webPreferences: {
       preload: preloadEntry,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
-  });
+  };
+
+  if (process.platform === 'darwin') {
+    windowOptions.titleBarStyle = 'hiddenInset';
+  } else if (process.platform === 'win32') {
+    windowOptions.titleBarStyle = 'hidden';
+  }
+
+  if (appIconEntry && process.platform === 'win32') {
+    windowOptions.icon = appIconEntry;
+  }
+
+  const window = new BrowserWindow(windowOptions);
 
   window.setMenuBarVisibility(false);
   window.removeMenu();

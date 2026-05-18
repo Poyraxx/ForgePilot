@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -17,6 +16,7 @@ import { listPermissionPresets } from '../core/permissions.js';
 import { relativizeWorkspacePath, resolveWorkspacePath } from '../core/path-guard.js';
 import { ToolRegistry } from '../core/tool-registry.js';
 import { createBuiltInTools } from '../core/tools/index.js';
+import { resolveDefaultStatePath } from '../core/platform.js';
 
 const DEFAULT_MODEL_SETTINGS = Object.freeze({
   contextLength: 32768,
@@ -36,14 +36,6 @@ function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function resolveDefaultStatePath() {
-  if (process.env.APPDATA) {
-    return path.join(process.env.APPDATA, 'CokGizliCoder', 'desktop-state.json');
-  }
-
-  return path.join(os.homedir(), '.cokgizlicoder', 'desktop-state.json');
 }
 
 function truncate(value, maxLength = 44) {

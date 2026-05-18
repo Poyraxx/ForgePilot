@@ -1,11 +1,6 @@
 # ForgePilot
 
-ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It provides a chat UI, a multi-provider runtime, built-in file and terminal tools, MCP support, web research tools, and document ingestion for PDFs and office files.
-[DEMO](https://www.youtube.com/watch?v=wBWoxGxW-gI)
-
-
-![ForgePilot](https://i.hizliresim.com/a9coyvb.png)
-
+ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It provides a Codex/Cursor-style chat UI, a multi-provider runtime, built-in file and terminal tools, MCP support, web research tools, and document ingestion for PDFs and office files.
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
@@ -39,6 +34,10 @@ The core design goal is simple: even if a model does not support native tool cal
 - Persistent threads, settings, and runtime state
 - Multi-language UI with English default
 - Attachment reuse across a thread
+- Cross-platform packaging targets
+  - Windows x64 portable
+  - macOS x64 + arm64
+  - Linux x64 AppImage + deb
 - Document extraction for:
   - `pdf`
   - `docx`
@@ -51,10 +50,12 @@ The core design goal is simple: even if a model does not support native tool cal
 ## Desktop UX
 
 - Custom top chrome with app-style controls
+- Codex-inspired left rail, thread center, and progress panel
 - Composer with provider, permission, model, and attachment controls
 - Live progress feed for tool execution
 - Approval flow for risky tools in `ask` mode
 - Change summary cards after file edits
+- Structure-first web fetch with title, description, heading outline, and link previews
 
 ## Architecture
 
@@ -85,10 +86,20 @@ plugins/
 - Node.js `>= 24`
 - Electron `^35`
 - Ollama for local Ollama sessions
+- Python 3 for structured document reading from PDFs and office files
+- Python packages from `requirements-docs.txt` for PDF and Office extraction
 - Optional API keys for hosted providers:
   - OpenAI
   - Anthropic
   - Any OpenAI-compatible endpoint that requires authentication
+
+## Official Platform Targets
+
+- Windows `x64`
+- macOS `x64` and `arm64`
+- Linux `x64`
+
+Kali Linux is covered through the Debian-style `deb` package target.
 
 ## Getting Started
 
@@ -96,6 +107,12 @@ Install dependencies:
 
 ```powershell
 npm install
+```
+
+Install document-reading Python dependencies:
+
+```powershell
+python -m pip install -r requirements-docs.txt
 ```
 
 Start the app:
@@ -109,6 +126,48 @@ Run tests:
 ```powershell
 node --test
 ```
+
+## Build Outputs
+
+Build for the current Windows host:
+
+```powershell
+npm.cmd run build:win
+```
+
+Build on macOS:
+
+```bash
+npm run build:mac
+```
+
+Build on Linux:
+
+```bash
+npm run build:linux
+```
+
+Expected artifacts:
+
+- `ForgePilot-<version>-win-x64.exe`
+- `ForgePilot-<version>-mac-x64.dmg`
+- `ForgePilot-<version>-mac-arm64.dmg`
+- `ForgePilot-<version>-linux-x64.AppImage`
+- `ForgePilot-<version>-linux-x64.deb`
+
+## Native Release Automation
+
+The repository includes GitHub Actions workflows for native multi-platform validation and packaging:
+
+- `.github/workflows/ci.yml`
+  - runs `node --test` on Windows, macOS, and Ubuntu
+- `.github/workflows/release.yml`
+  - builds native artifacts on:
+    - `windows-latest`
+    - `macos-latest`
+    - `ubuntu-latest`
+
+This is the recommended path for final macOS and Linux release artifacts, since `electron-builder` only supports macOS packaging on macOS and Linux distributables are most reliable on a native Linux runner.
 
 ## Provider Notes
 
@@ -159,6 +218,15 @@ The runtime supports:
 - Resolving attachment aliases and filename-only references
 - Extracting readable text from PDFs and office documents
 
+## Web Research
+
+ForgePilot includes two built-in web tools:
+
+- `web_search`
+- `web_fetch`
+
+`web_fetch` follows a structure-first approach inspired by browser automation tools such as FSB: besides plain text, it returns the page title, meta description, canonical URL, heading outline, and a compact link preview list. That gives weaker local models more reliable page context than a raw text dump alone.
+
 ## Acceptance Tests
 
 To run the real Ollama acceptance flow:
@@ -168,10 +236,16 @@ $env:RUN_OLLAMA_ACCEPTANCE='1'
 node --test test/ollama-acceptance.test.js
 ```
 
+Expected local models:
+
+- `qwen3-coder-next:latest`
+- `huihui_ai/qwen3-coder-abliterated:latest`
+
 ## Known Limits
 
 - Hosted provider support depends on the target endpoint correctly implementing its API contract
 - Some weaker local models may still overuse search or produce unstable tool envelopes
+- macOS and Linux packaging should be generated on their native host OS for the most reliable release artifacts
 - UI is optimized for desktop usage first
 
 ## Development Notes

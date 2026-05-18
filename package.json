@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "description": "Desktop agent workspace for local and hosted LLMs with tool calling, MCP, and document support.",
   "productName": "ForgePilot",
-  "author": "ForgePilot",
+  "author": {
+    "name": "ForgePilot",
+    "email": "hello@forgepilot.app"
+  },
+  "homepage": "https://forgepilot.app",
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {
@@ -12,7 +16,9 @@
     "test": "node --test",
     "test:acceptance": "node --test test/ollama-acceptance.test.js",
     "pack": "electron-builder --dir",
-    "build:win": "electron-builder --win portable"
+    "build:win": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac dmg zip --x64 --arm64",
+    "build:linux": "electron-builder --linux AppImage deb --x64"
   },
   "engines": {
     "node": ">=24"
@@ -24,14 +30,15 @@
   "build": {
     "appId": "com.forgepilot.desktop",
     "productName": "ForgePilot",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "src/**/*",
       "scripts/**/*",
       "plugins/**/*",
-      "ChatGPT Image 12 May 2026 20_29_11.ico",
       "package.json",
       "README.md",
       "!test{,/**/*}",
@@ -43,12 +50,55 @@
       "!.cokgizlicoder{,/**/*}"
     ],
     "asar": true,
+    "asarUnpack": [
+      "src/core/tools/document-reader.py"
+    ],
     "win": {
-      "icon": "ChatGPT Image 12 May 2026 20_29_11.ico",
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "executableName": "forgepilot",
+      "maintainer": "ForgePilot <hello@forgepilot.app>",
+      "icon": "build/icons",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
           "arch": [
             "x64"
           ]
