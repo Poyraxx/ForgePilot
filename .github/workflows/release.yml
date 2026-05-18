@@ -40,16 +40,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -61,7 +61,9 @@ jobs:
           sudo gem install --no-document fpm
 
       - name: Install document runtime dependencies
-        run: python -m pip install -r requirements-docs.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-docs.txt
 
       - name: Install npm dependencies
         run: npm ci
