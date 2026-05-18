@@ -1,0 +1,86 @@
+name: Build Releases
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            build_command: npm run build:win
+            artifact_name: forgepilot-windows
+            artifact_paths: |
+              release/*.exe
+          - name: macos
+            os: macos-latest
+            build_command: npm run build:mac
+            artifact_name: forgepilot-macos
+            artifact_paths: |
+              release/*.dmg
+              release/*.zip
+          - name: linux
+            os: ubuntu-latest
+            build_command: npm run build:linux
+            artifact_name: forgepilot-linux
+            artifact_paths: |
+              release/*.AppImage
+              release/*.deb
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ruby ruby-dev build-essential rpm bsdtar libopenjp2-tools
+          sudo gem install --no-document fpm
+
+      - name: Install document runtime dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: node --test
+
+      - name: Build platform artifacts
+        run: ${{ matrix.build_command }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
+          if-no-files-found: error
+
+      - name: Publish tagged release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_paths }}
