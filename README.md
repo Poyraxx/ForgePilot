@@ -4,6 +4,30 @@ ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It 
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
+## What's New in v0.2
+
+- Added a scalable localization layer with a 5-language core:
+  - English
+  - Turkce
+  - Deutsch
+  - Espanol
+  - Russkiy
+- Added `browser_fetch` as a browser-backed research tool for blocked or JS-heavy pages
+- Improved `web_search` and `web_fetch` reliability:
+  - DuckDuckGo redirect unwrapping
+  - inaccessible-result filtering
+  - result-aware fetch flow using discovered search results
+  - stricter runtime guards against hallucinated URLs
+  - better timeout and network error handling
+- Added thread-level attachment reuse and visible document shelf support in the UI
+- Added richer research UX:
+  - source cards under research-heavy answers
+  - live activity phases
+  - diagnostics footer
+  - progress/debug report export from Help/About
+- Improved provider and session error handling so common configuration issues surface as UI notifications instead of noisy console failures
+- Expanded cross-platform packaging and CI workflows for Windows, macOS, and Linux artifacts
+
 ## Highlights
 
 - Multi-provider runtime
@@ -28,11 +52,17 @@ The core design goal is simple: even if a model does not support native tool cal
   - `run_command`
   - `web_search`
   - `web_fetch`
+  - `browser_fetch`
 - MCP server support from Settings
 - Stdio plugin support
 - Conversation search palette
 - Persistent threads, settings, and runtime state
 - Multi-language UI with English default
+  - `en`
+  - `tr`
+  - `de`
+  - `es`
+  - `ru`
 - Attachment reuse across a thread
 - Cross-platform packaging targets
   - Windows x64 portable
@@ -52,8 +82,12 @@ The core design goal is simple: even if a model does not support native tool cal
 - Custom top chrome with app-style controls
 - Composer with provider, permission, model, and attachment controls
 - Live progress feed for tool execution
+- Live activity phases such as searching, fetching, reading, analyzing, and waiting approval
 - Approval flow for risky tools in `ask` mode
 - Change summary cards after file edits
+- Thread attachment/document shelf for reusing previously added files
+- Source cards for research-heavy answers
+- Exportable progress/debug reports from Help and About
 - Structure-first web fetch with title, description, heading outline, and link previews
 
 ## Architecture
@@ -216,6 +250,8 @@ The runtime supports:
 - Re-reading previously attached files
 - Resolving attachment aliases and filename-only references
 - Extracting readable text from PDFs and office documents
+- Showing reusable thread attachments in the renderer
+- Including richer document metadata in progress summaries when available
 
 ## Web Research
 
@@ -223,8 +259,11 @@ ForgePilot includes two built-in web tools:
 
 - `web_search`
 - `web_fetch`
+- `browser_fetch`
 
 `web_fetch` follows a structure-first approach inspired by browser automation tools such as FSB: besides plain text, it returns the page title, meta description, canonical URL, heading outline, and a compact link preview list. That gives weaker local models more reliable page context than a raw text dump alone.
+
+`browser_fetch` is the heavier fallback path for pages that are blocked, highly dynamic, or incomplete through a normal fetch. The research runtime now prefers exact discovered search results and applies stronger guards against hallucinated URLs in emulated tool mode.
 
 ## Acceptance Tests
 
@@ -247,3 +286,5 @@ node --test test/ollama-acceptance.test.js
 - State is persisted locally between restarts
 - Running tool traces are cleaned up on stop and app shutdown
 - Renderer notifications are used for provider and runtime errors instead of console-spam for common user-facing issues
+- Research runs now require at least one successful fetched source before final write-heavy output is accepted in web research flows
+- Progress export can be used to inspect web/tool behavior when debugging model decisions
