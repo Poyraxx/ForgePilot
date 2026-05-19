@@ -4,7 +4,7 @@ ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It 
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
-## What's New in v0.2
+## What's New in v2.1
 
 - Added a scalable localization layer with a 5-language core:
   - English
