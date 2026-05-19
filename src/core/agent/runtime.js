@@ -11,7 +11,13 @@ const CONTEXT_COMPACTION_TRIGGER_MESSAGE_COUNT = 36;
 const CONTEXT_COMPACTION_RECENT_MESSAGE_COUNT = 20;
 const CONTEXT_COMPACTION_CHECKPOINT_LIMIT = 8;
 const CONTEXT_COMPACTION_TOOL_LIMIT = 8;
-const EXPLORATORY_TOOL_NAMES = new Set(['fs_list', 'search_text', 'web_search', 'web_fetch']);
+const EXPLORATORY_TOOL_NAMES = new Set([
+  'fs_list',
+  'search_text',
+  'web_search',
+  'web_fetch',
+  'browser_fetch',
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -47,6 +53,22 @@ function summarizeToolResult(toolName, result) {
         result?.truncated ? ' (truncated)' : ''
       }.`;
     case 'fs_read':
+      {
+        const metadataDetails = [];
+        if (Number.isInteger(result?.metadata?.pages)) {
+          metadataDetails.push(`${result.metadata.pages} pages`);
+        } else if (Number.isInteger(result?.metadata?.sheetCount)) {
+          metadataDetails.push(`${result.metadata.sheetCount} sheets`);
+        } else if (Number.isInteger(result?.metadata?.slides)) {
+          metadataDetails.push(`${result.metadata.slides} slides`);
+        }
+
+        const headingPreview = Array.isArray(result?.metadata?.headings)
+          ? result.metadata.headings.slice(0, 3).join(' | ')
+          : Array.isArray(result?.metadata?.slideTitles)
+            ? result.metadata.slideTitles.slice(0, 3).join(' | ')
+            : '';
+
       return `${result?.extracted ? 'Extracted text from' : 'Read'} ${humanPath(
         result?.path ?? 'file'
       )}${
@@ -56,16 +78,11 @@ function summarizeToolResult(toolName, result) {
       }${
         result?.extracted && result?.format
           ? ` [${String(result.format).toUpperCase()}${
-              Number.isInteger(result?.metadata?.pages)
-                ? `, ${result.metadata.pages} pages`
-                : Number.isInteger(result?.metadata?.sheetCount)
-                  ? `, ${result.metadata.sheetCount} sheets`
-                  : Number.isInteger(result?.metadata?.slides)
-                    ? `, ${result.metadata.slides} slides`
-                    : ''
+              metadataDetails.length > 0 ? `, ${metadataDetails.join(', ')}` : ''
             }]`
           : ''
-      }.`;
+      }${headingPreview ? ` ${headingPreview}` : ''}.`;
+      }
     case 'fs_write':
       return `${result?.created ? 'Created' : 'Updated'} ${humanPath(result?.path ?? 'file')} (${result?.bytesWritten ?? 0} bytes).`;
     case 'fs_patch':
@@ -89,6 +106,12 @@ function summarizeToolResult(toolName, result) {
         result?.url ?? '',
         52
       )}${result?.truncated ? ' (truncated)' : ''}.`;
+    case 'browser_fetch':
+      return `Browser-fetched ${
+        result?.title ? `"${shortenInline(result.title, 52)}"` : 'web page'
+      } from ${shortenInline(result?.url ?? '', 52)}${
+        result?.truncated ? ' (truncated)' : ''
+      }${result?.screenshotPath ? ' with screenshot' : ''}.`;
     case 'run_command':
       return result?.timedOut
         ? `Command timed out${Number.isInteger(result?.exitCode) ? ` (exit ${result.exitCode})` : ''}.`
@@ -148,6 +171,33 @@ function normalizeWorkspacePath(value) {
   return normalized || '.';
 }
 
+function normalizeWebUrl(value) {
+  let normalized = String(value ?? '').trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('//')) {
+    normalized = `https:${normalized}`;
+  }
+
+  normalized = normalized.replace(/[)\],.;!?]+$/g, '');
+
+  try {
+    const parsed = new URL(normalized);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function extractUrlsFromText(value) {
+  const matches = String(value ?? '').match(/https?:\/\/[^\s<>"'`]+/gi) ?? [];
+  return matches.map((item) => normalizeWebUrl(item)).filter(Boolean);
+}
+
 function trackKnownPath(session, value) {
   if (!value) {
     return;
@@ -155,6 +205,27 @@ function trackKnownPath(session, value) {
 
   session.knownPaths ??= new Set(['.']);
   session.knownPaths.add(normalizeWorkspacePath(value));
+}
+
+function trackKnownWebUrl(session, value) {
+  const normalized = normalizeWebUrl(value);
+  if (!normalized) {
+    return;
+  }
+
+  session.knownWebUrls ??= new Set();
+  session.knownWebUrls.add(normalized);
+}
+
+function trackKnownWebResult(session, resultId, url) {
+  const normalizedId = String(resultId ?? '').trim();
+  const normalizedUrl = normalizeWebUrl(url);
+  if (!normalizedId || !normalizedUrl) {
+    return;
+  }
+
+  session.knownWebResultMap ??= new Map();
+  session.knownWebResultMap.set(normalizedId, normalizedUrl);
 }
 
 function trackKnownPathsFromResult(session, toolName, result) {
@@ -179,6 +250,27 @@ function trackKnownPathsFromResult(session, toolName, result) {
   }
 }
 
+function trackKnownWebUrlsFromResult(session, toolName, result) {
+  if (!result || typeof result !== 'object') {
+    return;
+  }
+
+  if (result.blocked) {
+    return;
+  }
+
+  if (toolName === 'web_search' && Array.isArray(result.results)) {
+    for (const entry of result.results) {
+      trackKnownWebUrl(session, entry?.url);
+      trackKnownWebResult(session, entry?.id, entry?.url);
+    }
+  }
+
+  if (['web_fetch', 'browser_fetch'].includes(toolName) && result.url) {
+    trackKnownWebUrl(session, result.url);
+  }
+}
+
 function getNearbyKnownPaths(session, requestedPath) {
   const normalized = normalizeWorkspacePath(requestedPath);
   const prefix = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';
@@ -189,6 +281,15 @@ function getNearbyKnownPaths(session, requestedPath) {
     : candidates;
 
   return prioritized.slice(0, 10);
+}
+
+function resolveKnownWebResultUrl(session, resultId) {
+  const normalizedId = String(resultId ?? '').trim();
+  if (!normalizedId) {
+    return '';
+  }
+
+  return String(session.knownWebResultMap?.get(normalizedId) ?? '').trim();
 }
 
 function buildAttachmentInventoryMessage(session) {
@@ -250,6 +351,145 @@ function matchesAttachmentAlias(session, requestedPath) {
       aliases.some((alias) => normalized.endsWith(`/${alias}`))
     );
   });
+}
+
+function collectKnownWebUrls(session) {
+  const known = new Set(session.knownWebUrls ?? []);
+
+  for (const message of session.messages ?? []) {
+    if (message.role !== 'user') {
+      continue;
+    }
+
+    for (const url of extractUrlsFromText(message.content)) {
+      known.add(url);
+    }
+  }
+
+  for (const event of session.toolEvents ?? []) {
+    if (event.toolName === 'web_search' && Array.isArray(event.result?.results)) {
+      for (const entry of event.result.results) {
+        const url = normalizeWebUrl(entry?.url);
+        if (url) {
+          known.add(url);
+        }
+      }
+    }
+
+    if (['web_fetch', 'browser_fetch'].includes(event.toolName) && !event.result?.blocked) {
+      const url = normalizeWebUrl(event.result?.url);
+      if (url) {
+        known.add(url);
+      }
+    }
+  }
+
+  return known;
+}
+
+function getCurrentTurnStartedAt(session) {
+  const messages = session.messages ?? [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      return messages[index]?.createdAt ?? null;
+    }
+  }
+
+  return null;
+}
+
+function getCurrentTurnToolEvents(session) {
+  const startedAt = getCurrentTurnStartedAt(session);
+  const toolEvents = session.toolEvents ?? [];
+
+  if (!startedAt) {
+    return toolEvents;
+  }
+
+  return toolEvents.filter((event) => {
+    const createdAt = event.createdAt ?? '';
+    return createdAt >= startedAt;
+  });
+}
+
+function getLatestSearchResultUrls(session, limit = 6) {
+  return getLatestSearchResultCandidates(session)
+    .map((entry) => entry.url)
+    .slice(0, limit);
+}
+
+function getLatestSearchResultCandidates(session) {
+  const currentTurnEvents = getCurrentTurnToolEvents(session);
+  for (let index = currentTurnEvents.length - 1; index >= 0; index -= 1) {
+    const event = currentTurnEvents[index];
+    if (event.toolName !== 'web_search' || !Array.isArray(event.result?.results)) {
+      continue;
+    }
+
+    return event.result.results
+      .map((entry) => ({
+        title: String(entry?.title ?? '').trim(),
+        url: normalizeWebUrl(entry?.url),
+        snippet: String(entry?.snippet ?? '').trim(),
+        availability: entry?.availability ?? null,
+      }))
+      .filter((entry) => entry.url);
+  }
+
+  return [];
+}
+
+function pickRedirectedWebFetchCandidate(session) {
+  const candidates = getLatestSearchResultCandidates(session);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const currentTurnEvents = getCurrentTurnToolEvents(session);
+  const alreadyFetched = new Set(
+    currentTurnEvents
+      .filter(
+        (event) =>
+          ['web_fetch', 'browser_fetch'].includes(event.toolName) &&
+          event.status === 'completed' &&
+          event.result?.url
+      )
+      .map((event) => normalizeWebUrl(event.result.url))
+      .filter(Boolean)
+  );
+
+  const preferred = candidates.find(
+    (candidate) =>
+      candidate.availability?.ok === true &&
+      !alreadyFetched.has(candidate.url)
+  );
+  if (preferred) {
+    return preferred;
+  }
+
+  return candidates.find((candidate) => !alreadyFetched.has(candidate.url)) ?? candidates[0] ?? null;
+}
+
+function resolveWebCallArguments(session, call) {
+  if (!['web_fetch', 'browser_fetch'].includes(call?.name)) {
+    return call?.arguments ?? {};
+  }
+
+  const resultId = String(call?.arguments?.resultId ?? '').trim();
+  if (!resultId) {
+    return call?.arguments ?? {};
+  }
+
+  const resolvedUrl = resolveKnownWebResultUrl(session, resultId);
+  if (!resolvedUrl) {
+    return call?.arguments ?? {};
+  }
+
+  return {
+    ...call.arguments,
+    url: resolvedUrl,
+    resolvedFromResultId: true,
+  };
 }
 
 function buildCompactedConversationSummary(session, compactedMessages, recentMessages) {
@@ -445,7 +685,14 @@ export class AgentRuntime {
         throwIfAborted(signal);
         session.capabilities = capabilities;
 
-        const turn = await this.provider.runTurn({
+        this.#notifyProgress(session, onProgress, { phase: 'analyzing' });
+
+        const turnRunner =
+          typeof this.provider.runStreamingTurn === 'function'
+            ? this.provider.runStreamingTurn.bind(this.provider)
+            : this.provider.runTurn.bind(this.provider);
+
+        const turn = await turnRunner({
           model: session.model,
           messages: contextMessages,
           tools: visibleTools,
@@ -458,6 +705,19 @@ export class AgentRuntime {
             temperature: session.modelSettings?.temperature,
           },
           signal,
+          onChunk: (chunk) => {
+            const nextContent = String(chunk?.content ?? '').trim();
+            const nextThinking = String(chunk?.thinking ?? '').trim();
+            if (!nextContent && !nextThinking) {
+              return;
+            }
+
+            this.#notifyProgress(session, onProgress, {
+              phase: 'assistant_stream',
+              streamText: nextContent,
+              streamThinking: nextThinking,
+            });
+          },
         });
 
         throwIfAborted(signal);
@@ -479,6 +739,16 @@ export class AgentRuntime {
           this.#notifyProgress(session, onProgress, { phase: 'assistant_tool_plan' });
 
           if (assistantMessage.toolCalls.length === 0) {
+            if (this.#recordMissingWebEvidenceWarning(session, onProgress)) {
+              countedIterations += 1;
+              this.#setLoopTracker(session, {
+                previousSignature,
+                repeatedSignatureCount,
+                countedIterations,
+              });
+              continue;
+            }
+
             this.#clearLoopTracker(session);
             this.#notifyProgress(session, onProgress, { phase: 'completed' });
             return { status: 'completed', session };
@@ -594,6 +864,18 @@ export class AgentRuntime {
           createdAt: nowIso(),
         });
 
+        if (turn.envelope.mode === AgentEnvelopeMode.FINAL) {
+          if (this.#recordMissingWebEvidenceWarning(session, onProgress)) {
+            countedIterations += 1;
+            this.#setLoopTracker(session, {
+              previousSignature,
+              repeatedSignatureCount,
+              countedIterations,
+            });
+            continue;
+          }
+        }
+
         this.#clearLoopTracker(session);
         this.#notifyProgress(session, onProgress, {
           phase: turn.envelope.mode === AgentEnvelopeMode.ERROR ? 'error' : 'completed',
@@ -696,6 +978,73 @@ export class AgentRuntime {
     }
   }
 
+  #buildMissingWebEvidenceWarning(session) {
+    if (session.capabilities?.nativeTools) {
+      return null;
+    }
+
+    const currentTurnEvents = getCurrentTurnToolEvents(session);
+    const hasWebSearch = currentTurnEvents.some(
+      (event) => event.toolName === 'web_search' && event.status === 'completed'
+    );
+    if (!hasWebSearch) {
+      return null;
+    }
+
+    const hasSuccessfulFetch = currentTurnEvents.some(
+      (event) =>
+        ['web_fetch', 'browser_fetch'].includes(event.toolName) && event.status === 'completed'
+    );
+    if (hasSuccessfulFetch) {
+      return null;
+    }
+
+    const nearbyUrls = getLatestSearchResultUrls(session);
+    const nearbyText =
+      nearbyUrls.length > 0
+        ? ` Latest exact search-result URLs: ${nearbyUrls.join(', ')}.`
+        : '';
+
+    return `This turn started web research but no source page has been fetched successfully yet.${nearbyText} Do not finalize or write conclusions from generic knowledge. Use web_fetch on one exact URL from the latest web_search results, or use browser_fetch if that exact returned page needs JavaScript or blocks normal fetch.`;
+  }
+
+  #recordMissingWebEvidenceWarning(session, onProgress) {
+    const warning = this.#buildMissingWebEvidenceWarning(session);
+    if (!warning) {
+      return false;
+    }
+
+    const event = {
+      id: randomUUID(),
+      toolName: 'web_fetch',
+      arguments: {},
+      status: 'blocked',
+      createdAt: nowIso(),
+      completedAt: nowIso(),
+      source: 'runtime',
+      resultPreview: warning,
+      result: {
+        warning,
+        blocked: true,
+        guard: 'missing_web_evidence',
+      },
+    };
+
+    session.toolEvents.push(event);
+    session.messages.push({
+      id: randomUUID(),
+      role: 'tool',
+      toolName: 'web_fetch',
+      content: JSON.stringify(event.result),
+      createdAt: nowIso(),
+    });
+    this.#notifyProgress(session, onProgress, {
+      phase: 'tool_blocked',
+      eventId: event.id,
+    });
+    return true;
+  }
+
   #stopForRepeatedToolLoop(session) {
     this.#clearLoopTracker(session);
     session.messages.push({
@@ -727,7 +1076,12 @@ export class AgentRuntime {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const turn = await this.provider.runTurn({
+    this.#notifyProgress(session, onProgress, { phase: 'analyzing' });
+    const turnRunner =
+      typeof this.provider.runStreamingTurn === 'function'
+        ? this.provider.runStreamingTurn.bind(this.provider)
+        : this.provider.runTurn.bind(this.provider);
+    const turn = await turnRunner({
       model: session.model,
       messages: [...buildContextMessages(session), { role: 'user', content: synthesisPrompt }],
       tools: [],
@@ -740,6 +1094,19 @@ export class AgentRuntime {
         temperature: session.modelSettings?.temperature,
       },
       signal,
+      onChunk: (chunk) => {
+        const nextContent = String(chunk?.content ?? '').trim();
+        const nextThinking = String(chunk?.thinking ?? '').trim();
+        if (!nextContent && !nextThinking) {
+          return;
+        }
+
+        this.#notifyProgress(session, onProgress, {
+          phase: 'assistant_stream',
+          streamText: nextContent,
+          streamThinking: nextThinking,
+        });
+      },
     });
 
     if (capabilities.nativeTools) {
@@ -811,11 +1178,14 @@ export class AgentRuntime {
     for (let index = 0; index < toolCalls.length; index += 1) {
       throwIfAborted(signal);
       const call = toolCalls[index];
+      const resolvedArguments = resolveWebCallArguments(session, call);
+      const resolvedCall =
+        resolvedArguments === call.arguments ? call : { ...call, arguments: resolvedArguments };
       const toolDefinition = session.toolRegistry.get(call.name);
       const event = {
         id: randomUUID(),
         toolName: call.name,
-        arguments: call.arguments,
+        arguments: resolvedCall.arguments,
         status: 'queued',
         createdAt: nowIso(),
         source: toolDefinition?.source ?? 'unknown',
@@ -861,8 +1231,61 @@ export class AgentRuntime {
         return { status: 'approval_required' };
       }
 
-      if (this.#shouldBlockUndiscoveredPath(session, call)) {
-        const warning = this.#buildUndiscoveredPathWarning(session, call);
+      const warning =
+        (['fs_write', 'fs_patch'].includes(call.name)
+          ? this.#buildMissingWebEvidenceWarning(session)
+          : null) ??
+        this.#buildUndiscoveredPathWarning(session, resolvedCall) ??
+        this.#buildUndiscoveredWebWarning(session, resolvedCall);
+
+      if (warning) {
+        if (['web_fetch', 'browser_fetch'].includes(call.name)) {
+          const fallbackCandidate = pickRedirectedWebFetchCandidate(session);
+          if (fallbackCandidate) {
+            event.arguments = {
+              ...call.arguments,
+              url: fallbackCandidate.url,
+              requestedUrl: call.arguments?.url ?? '',
+              runtimeRedirected: true,
+            };
+            event.redirectedFromUrl = call.arguments?.url ?? '';
+            event.redirectedToUrl = fallbackCandidate.url;
+            event.redirectReason = warning;
+            this.#notifyProgress(session, onProgress, {
+              phase: 'tool_redirected',
+              eventId: event.id,
+            });
+
+            await this.#executeToolCall(
+              session,
+              {
+                ...call,
+                arguments: {
+                  ...call.arguments,
+                  url: fallbackCandidate.url,
+                },
+              },
+              toolDefinition,
+              event,
+              signal,
+              onProgress,
+              {
+                redirectedFromUrl: resolvedCall.arguments?.url ?? call.arguments?.url ?? '',
+                redirectedToUrl: fallbackCandidate.url,
+                redirectTitle: fallbackCandidate.title,
+                redirectReason: warning,
+              }
+            );
+            continue;
+          }
+        }
+
+        const blockedReference =
+          typeof call.arguments?.path === 'string'
+            ? { path: call.arguments.path }
+            : typeof call.arguments?.url === 'string'
+              ? { url: call.arguments.url }
+              : {};
 
         session.messages.push({
           id: randomUUID(),
@@ -871,7 +1294,7 @@ export class AgentRuntime {
           content: JSON.stringify({
             warning,
             blocked: true,
-            path: call.arguments?.path ?? '',
+            ...blockedReference,
           }),
           createdAt: nowIso(),
         });
@@ -882,7 +1305,7 @@ export class AgentRuntime {
         event.result = {
           warning,
           blocked: true,
-          path: call.arguments?.path ?? '',
+          ...blockedReference,
         };
         this.#notifyProgress(session, onProgress, {
           phase: 'tool_blocked',
@@ -891,13 +1314,13 @@ export class AgentRuntime {
         continue;
       }
 
-      await this.#executeToolCall(session, call, toolDefinition, event, signal, onProgress);
+      await this.#executeToolCall(session, resolvedCall, toolDefinition, event, signal, onProgress);
     }
 
     return { status: 'completed' };
   }
 
-  async #executeToolCall(session, call, toolDefinition, event, signal, onProgress) {
+  async #executeToolCall(session, call, toolDefinition, event, signal, onProgress, executionMeta = null) {
     event.status = 'running';
     event.startedAt = nowIso();
     this.#notifyProgress(session, onProgress, {
@@ -914,20 +1337,38 @@ export class AgentRuntime {
         signal,
       });
 
+      const decoratedResult =
+        executionMeta?.redirectedFromUrl
+          ? {
+              ...result,
+              requestedUrl: executionMeta.redirectedFromUrl,
+              url: result?.url ?? executionMeta.redirectedToUrl,
+              runtimeRedirected: true,
+              redirectTitle: executionMeta.redirectTitle ?? '',
+              redirectReason: executionMeta.redirectReason ?? '',
+            }
+          : result;
+
       session.messages.push({
         id: randomUUID(),
         role: 'tool',
         toolName: call.name,
-        content: toolMessageContent(result),
+        content: toolMessageContent(decoratedResult),
         createdAt: nowIso(),
       });
 
       event.status = 'completed';
       event.completedAt = nowIso();
-      event.resultPreview = summarizeToolResult(call.name, result);
-      event.diffText = result?.diff ?? result?.diffText ?? '';
-      event.result = result;
-      trackKnownPathsFromResult(session, call.name, result);
+      event.resultPreview = executionMeta?.redirectedFromUrl
+        ? `Reused exact search-result URL ${shortenInline(
+            executionMeta.redirectedToUrl,
+            64
+          )} instead of invented URL ${shortenInline(executionMeta.redirectedFromUrl, 52)}.`
+        : summarizeToolResult(call.name, decoratedResult);
+      event.diffText = decoratedResult?.diff ?? decoratedResult?.diffText ?? '';
+      event.result = decoratedResult;
+      trackKnownPathsFromResult(session, call.name, decoratedResult);
+      trackKnownWebUrlsFromResult(session, call.name, decoratedResult);
       this.#notifyProgress(session, onProgress, {
         phase: 'tool_completed',
         eventId: event.id,
@@ -989,18 +1430,18 @@ export class AgentRuntime {
     });
   }
 
-  #shouldBlockUndiscoveredPath(session, call) {
+  #buildUndiscoveredPathWarning(session, call) {
     if (session.capabilities?.nativeTools) {
-      return false;
+      return null;
     }
 
     if (!['fs_read', 'fs_patch', 'fs_delete'].includes(call.name)) {
-      return false;
+      return null;
     }
 
     const requestedPath = call.arguments?.path;
     if (!requestedPath || typeof requestedPath !== 'string') {
-      return false;
+      return null;
     }
 
     const normalizedPath = normalizeWorkspacePath(requestedPath);
@@ -1009,18 +1450,55 @@ export class AgentRuntime {
       (pathExistsInsideWorkspace(session.workspaceRoot, normalizedPath) ||
         matchesAttachmentAlias(session, normalizedPath))
     ) {
-      return false;
+      return null;
     }
 
-    return !(session.knownPaths ?? new Set(['.'])).has(normalizedPath);
-  }
+    if ((session.knownPaths ?? new Set(['.'])).has(normalizedPath)) {
+      return null;
+    }
 
-  #buildUndiscoveredPathWarning(session, call) {
-    const requestedPath = normalizeWorkspacePath(call.arguments?.path ?? '');
-    const nearbyPaths = getNearbyKnownPaths(session, requestedPath);
+    const nearbyPaths = getNearbyKnownPaths(session, normalizedPath);
     const nearbyText =
       nearbyPaths.length > 0 ? ` Known paths nearby: ${nearbyPaths.join(', ')}.` : '';
 
-    return `Path "${requestedPath}" has not been discovered in this thread yet.${nearbyText} Use fs_list or search_text first, then read one of the returned paths exactly.`;
+    return `Path "${normalizedPath}" has not been discovered in this thread yet.${nearbyText} Use fs_list or search_text first, then read one of the returned paths exactly.`;
+  }
+
+  #buildUndiscoveredWebWarning(session, call) {
+    if (session.capabilities?.nativeTools) {
+      return null;
+    }
+
+    if (!['web_fetch', 'browser_fetch'].includes(call.name)) {
+      return null;
+    }
+
+    const requestedResultId = String(call.arguments?.resultId ?? '').trim();
+    if (requestedResultId) {
+      const resolvedUrl = resolveKnownWebResultUrl(session, requestedResultId);
+      if (resolvedUrl) {
+        return null;
+      }
+
+      return `Search result id "${requestedResultId}" is not known in this thread yet. Use web_search first, then reuse one exact resultId that appeared in the returned search results.`;
+    }
+
+    const requestedUrl = normalizeWebUrl(call.arguments?.url ?? '');
+    if (!requestedUrl) {
+      return null;
+    }
+
+    const knownUrls = collectKnownWebUrls(session);
+    if (knownUrls.has(requestedUrl)) {
+      return null;
+    }
+
+    const nearbyUrls = [...knownUrls].slice(-6);
+    const nearbyText =
+      nearbyUrls.length > 0
+        ? ` Known URLs in this thread: ${nearbyUrls.join(', ')}.`
+        : '';
+
+    return `URL "${requestedUrl}" has not been discovered in this thread yet.${nearbyText} Do not guess or invent another URL from memory. Run web_search again with a better query, then reuse one exact URL that appeared in the search results or the user's message.`;
   }
 }

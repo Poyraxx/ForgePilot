@@ -33,6 +33,11 @@ export function buildEmulationSystemPrompt(tools, workspaceRoot, knownPaths = []
     'Use fs_patch only when you already know the exact existing text from fs_read.',
     'If you want to replace an entire file, prefer fs_write instead of fs_patch.',
     'If you need current public web information, use web_search first and then web_fetch one of the returned URLs.',
+    'After web_search, prefer resultId-based fetching: pass the exact resultId from web_search into web_fetch or browser_fetch whenever available.',
+    'Only web_fetch or browser_fetch an exact URL that appeared in web_search results or that the user explicitly pasted.',
+    'Never invent, rewrite, shorten, or guess a web URL from memory, snippets, titles, or domain knowledge.',
+    'If a web URL is blocked as undiscovered, do not try a different guessed URL. Run web_search again with a better query and copy one exact returned URL.',
+    'If normal web_fetch is blocked, incomplete, or the page needs JavaScript, use browser_fetch for a browser-rendered read.',
     'Do not repeat the same exploratory tool call if the previous result already gave enough context.',
     'If a tool reports that a path was not found, choose a different path from prior tool output instead of guessing.',
     normalizedKnownPaths.length > 0

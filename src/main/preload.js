@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('cokgizlicoder', {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   chooseWorkspace: (defaultPath) => ipcRenderer.invoke('app:choose-workspace', defaultPath),
   refreshModels: (payload) => ipcRenderer.invoke('app:refresh-models', payload),
+  exportProgressReport: (payload) => ipcRenderer.invoke('app:export-progress-report', payload),
   saveAppState: (payload) => ipcRenderer.invoke('app:save-state', payload),
   createSession: (payload) => ipcRenderer.invoke('session:create', payload),
   getSession: (sessionId) => ipcRenderer.invoke('session:get', sessionId),

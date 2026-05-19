@@ -174,3 +174,58 @@ test('ollama provider surfaces a friendly message when Ollama is offline', async
     globalThis.fetch = originalFetch;
   }
 });
+
+test('ollama streaming emulation repairs malformed protocol replies before surfacing an error', async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+
+  globalThis.fetch = async (_url, init = {}) => {
+    requests += 1;
+    const payload = JSON.parse(init.body);
+
+    if (payload.stream) {
+      const chunks = [
+        JSON.stringify({ message: { content: 'I found two useful sources and here is the summary:' } }) + '\n',
+      ];
+
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(new TextEncoder().encode(chunk));
+            }
+            controller.close();
+          },
+        }),
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        message: {
+          content: '<agent-response>{"mode":"final","message":"I found two useful sources and summarized them."}</agent-response>',
+        },
+      }),
+    };
+  };
+
+  try {
+    const provider = new OllamaProvider({ baseUrl: 'http://127.0.0.1:11434' });
+    const result = await provider.runStreamingTurn({
+      model: 'emulated-model',
+      messages: [{ role: 'user', content: 'research this topic' }],
+      tools: [],
+      useNativeTools: false,
+      workspaceRoot: 'C:/workspace',
+    });
+
+    assert.equal(result.envelope.mode, 'final');
+    assert.match(result.envelope.message, /summarized/i);
+    assert.equal(requests, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

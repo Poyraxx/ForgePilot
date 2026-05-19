@@ -41,6 +41,14 @@ def extract_docx(file_path: Path) -> dict[str, object]:
 
     document = Document(str(file_path))
     blocks = non_empty_lines([paragraph.text for paragraph in document.paragraphs])
+    headings = non_empty_lines(
+        [
+            paragraph.text
+            for paragraph in document.paragraphs
+            if normalize_text(paragraph.text)
+            and getattr(getattr(paragraph, "style", None), "name", "").lower().startswith("heading")
+        ]
+    )
 
     for table in document.tables:
         for row in table.rows:
@@ -54,6 +62,7 @@ def extract_docx(file_path: Path) -> dict[str, object]:
         "metadata": {
             "paragraphs": len(document.paragraphs),
             "tables": len(document.tables),
+            "headings": headings[:12],
         },
     }
 
@@ -103,6 +112,7 @@ def natural_order(name: str) -> list[object]:
 def extract_pptx(file_path: Path) -> dict[str, object]:
     namespace = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
     slide_blocks: list[str] = []
+    slide_titles: list[str] = []
 
     with zipfile.ZipFile(file_path) as archive:
         slide_paths = sorted(
@@ -120,6 +130,7 @@ def extract_pptx(file_path: Path) -> dict[str, object]:
                 [node.text or "" for node in root.findall(".//a:t", namespace)]
             )
             if texts:
+                slide_titles.append(texts[0])
                 slide_blocks.append(f"[Slide {index}]\n" + "\n".join(texts))
 
     return {
@@ -127,6 +138,7 @@ def extract_pptx(file_path: Path) -> dict[str, object]:
         "content": "\n\n".join(slide_blocks) or "No extractable text was found in this presentation.",
         "metadata": {
             "slides": len(slide_blocks),
+            "slideTitles": slide_titles[:12],
         },
     }
 
@@ -163,6 +175,7 @@ def extract_open_document(file_path: Path) -> dict[str, object]:
         "metadata": {
             "paragraphs": len(paragraphs),
             "rows": len(rows),
+            "headings": headings[:12],
         },
     }
 

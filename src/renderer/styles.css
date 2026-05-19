@@ -1140,6 +1140,64 @@ textarea {
   margin: 0 auto;
 }
 
+.thread-attachment-shelf {
+  width: min(100%, 900px);
+  margin: 0 auto;
+  padding: 14px 28px 0;
+}
+
+.thread-attachment-shelf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.thread-attachment-shelf-header strong {
+  font-size: 0.92rem;
+}
+
+.thread-attachment-shelf-header span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.thread-attachment-shelf-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.thread-attachment-pill {
+  min-width: 220px;
+  max-width: 320px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.thread-attachment-pill:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.thread-attachment-pill strong,
+.thread-attachment-pill small {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.thread-attachment-pill small {
+  color: var(--muted);
+}
+
 .status-banner,
 .approval-panel,
 .empty-thread {
@@ -1291,6 +1349,78 @@ body[data-theme='paper'] .inspector-card pre {
   border-radius: 14px;
   background: var(--panel-bg);
   overflow: hidden;
+}
+
+.source-card {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  overflow: hidden;
+}
+
+.source-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-card-header span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.source-card-list {
+  display: grid;
+}
+
+.source-card-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-card-row:first-child {
+  border-top: 0;
+}
+
+.source-card-row:hover {
+  background: var(--panel-2);
+}
+
+.source-card-row-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.source-card-row-copy span,
+.source-card-row-copy small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.source-card-kind {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 0.74rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--panel-2);
 }
 
 .change-card-header {
@@ -1638,6 +1768,10 @@ body[data-theme='paper'] .inspector-card pre {
 .live-activity-list {
   display: grid;
   gap: 6px;
+  max-height: min(38vh, 360px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .live-activity-empty {
@@ -1645,6 +1779,24 @@ body[data-theme='paper'] .inspector-card pre {
   font-size: 0.82rem;
   line-height: 1.5;
   padding: 4px 2px;
+}
+
+.live-stream-preview {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.live-stream-preview.subtle {
+  color: var(--muted);
 }
 
 .approval-copy {
@@ -1826,6 +1978,36 @@ body[data-theme='paper'] .inspector-card pre {
   display: grid;
   place-items: center;
   font-size: 1.15rem;
+}
+
+.diagnostics-footer {
+  width: min(100%, 900px);
+  margin: 0 auto 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.diagnostic-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.diagnostic-pill.online {
+  color: var(--success);
+}
+
+.diagnostic-pill.attention,
+.diagnostic-pill.warning {
+  color: var(--warning);
 }
 
 .send-action-icon.stop {

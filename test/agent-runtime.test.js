@@ -488,6 +488,545 @@ test('runtime automatically compacts older thread context into a summary', async
   assert.equal(seenMessages.at(-1).content, 'latest user turn');
 });
 
+test('runtime blocks undiscovered web_fetch URLs for emulated models', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/invented-article"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [
+              {
+                name: 'web_fetch',
+                arguments: { url: 'https://www.example.com/invented-article' },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'find something on the web');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[0].status, 'blocked');
+  assert.match(session.toolEvents[0].resultPreview, /has not been discovered in this thread yet/i);
+  assert.match(session.toolEvents[0].resultPreview, /Run web_search again with a better query/i);
+});
+
+test('runtime allows web_fetch when the user explicitly provided the URL', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/provided"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [
+              {
+                name: 'web_fetch',
+                arguments: { url: 'https://www.example.com/provided' },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Example',
+      content: 'ok',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(
+    session,
+    'Read this URL: https://www.example.com/provided'
+  );
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[0].status, 'completed');
+  assert.equal(session.toolEvents[0].toolName, 'web_fetch');
+});
+
+test('runtime allows web_fetch for URLs returned by earlier web_search results', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/search-result"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [
+              {
+                name: 'web_fetch',
+                arguments: { url: 'https://www.example.com/search-result' },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  session.toolEvents.push({
+    id: 'event-search-1',
+    toolName: 'web_search',
+    arguments: { query: 'example query' },
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    resultPreview: 'Found 1 web results for "example query".',
+    result: {
+      query: 'example query',
+      results: [
+        {
+          title: 'Example result',
+          url: 'https://www.example.com/search-result',
+          snippet: 'Example snippet',
+        },
+      ],
+    },
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Example result',
+      content: 'ok',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'continue the research');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents.at(-1)?.status, 'completed');
+  assert.equal(session.toolEvents.at(-1)?.toolName, 'web_fetch');
+});
+
+test('runtime allows web_fetch by exact web_search resultId without copying the URL manually', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"resultId":"result-1"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [
+              {
+                name: 'web_fetch',
+                arguments: { resultId: 'result-1' },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  session.toolEvents.push({
+    id: 'event-search-resultid-1',
+    toolName: 'web_search',
+    arguments: { query: 'result id test' },
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    resultPreview: 'Found 1 web results for "result id test".',
+    result: {
+      query: 'result id test',
+      results: [
+        {
+          id: 'result-1',
+          title: 'Example result',
+          url: 'https://www.example.com/result-id',
+          snippet: 'Example snippet',
+        },
+      ],
+    },
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Example result',
+      content: 'ok',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'continue the research');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents.at(-1)?.status, 'completed');
+  assert.equal(session.toolEvents.at(-1)?.toolName, 'web_fetch');
+  assert.equal(session.toolEvents.at(-1)?.arguments?.resultId, 'result-1');
+  assert.equal(session.toolEvents.at(-1)?.arguments?.url, 'https://www.example.com/result-id');
+});
+
+test('runtime does not treat invented web URLs as newly discovered URLs later in the same thread', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/invented-1"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_fetch', arguments: { url: 'https://www.example.com/invented-1' } }],
+          },
+        };
+      }
+
+      if (this.turns === 2) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/invented-2"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_fetch', arguments: { url: 'https://www.example.com/invented-2' } }],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  session.toolEvents.push({
+    id: 'event-search-1',
+    toolName: 'web_search',
+    arguments: { query: 'example query' },
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    resultPreview: 'Found 1 web results for "example query".',
+    result: {
+      query: 'example query',
+      results: [
+        {
+          title: 'Example result',
+          url: 'https://www.example.com/search-result',
+          snippet: 'Example snippet',
+        },
+      ],
+    },
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Example result',
+      content: 'ok',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'continue the research');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[1]?.status, 'completed');
+  assert.equal(session.toolEvents[1]?.result?.runtimeRedirected, true);
+  assert.equal(session.toolEvents[1]?.result?.requestedUrl, 'https://www.example.com/invented-1');
+  assert.equal(session.toolEvents[1]?.result?.url, 'https://www.example.com/search-result');
+  assert.equal(session.toolEvents[2]?.status, 'completed');
+  assert.equal(session.toolEvents[2]?.result?.runtimeRedirected, true);
+  assert.equal(session.toolEvents[2]?.result?.requestedUrl, 'https://www.example.com/invented-2');
+  assert.equal(session.toolEvents[2]?.result?.url, 'https://www.example.com/search-result');
+});
+
+test('runtime does not allow finalizing web research before one exact search-result URL was fetched successfully', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_search","arguments":{"query":"example research"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_search', arguments: { query: 'example research' } }],
+          },
+        };
+      }
+
+      if (this.turns === 2) {
+        return {
+          message: '<agent-response>{"mode":"final","message":"Here is my research summary."}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'final',
+            message: 'Here is my research summary.',
+          },
+        };
+      }
+
+      if (this.turns === 3) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/search-result"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_fetch', arguments: { url: 'https://www.example.com/search-result' } }],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"Now I can summarize from the fetched page."}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'Now I can summarize from the fetched page.',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  const webSearchDefinition = session.toolRegistry.get('web_search');
+  session.toolRegistry.register({
+    ...webSearchDefinition,
+    handler: async () => ({
+      query: 'example research',
+      provider: 'duckduckgo',
+      results: [
+        {
+          title: 'Example result',
+          url: 'https://www.example.com/search-result',
+          snippet: 'Example snippet',
+          availability: { ok: true, status: 200, url: 'https://www.example.com/search-result', reason: 'ok' },
+        },
+      ],
+      filteredInaccessibleResults: 0,
+      inaccessibleResultsDetected: false,
+      truncated: false,
+    }),
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Example result',
+      content: 'verified content',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'research this on the web');
+  const guardEvent = session.toolEvents.find(
+    (event) => event.result?.guard === 'missing_web_evidence'
+  );
+  const completedFetchEvent = session.toolEvents.find(
+    (event) => event.toolName === 'web_fetch' && event.status === 'completed'
+  );
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[0]?.toolName, 'web_search');
+  assert.equal(guardEvent?.status, 'blocked');
+  assert.match(guardEvent?.resultPreview ?? '', /no source page has been fetched successfully yet/i);
+  assert.equal(completedFetchEvent?.status, 'completed');
+  assert.match(session.messages.at(-1)?.content ?? '', /Now I can summarize/);
+});
+
+test('runtime automatically redirects invented web_fetch URLs to a real URL from the latest search results', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_search","arguments":{"query":"football referee app"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_search', arguments: { query: 'football referee app' } }],
+          },
+        };
+      }
+
+      if (this.turns === 2) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.fifa.com/about-fifa/development/referee-technology"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [
+              {
+                name: 'web_fetch',
+                arguments: { url: 'https://www.fifa.com/about-fifa/development/referee-technology' },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"done"}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'done',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(provider);
+  const webSearchDefinition = session.toolRegistry.get('web_search');
+  session.toolRegistry.register({
+    ...webSearchDefinition,
+    handler: async () => ({
+      query: 'football referee app',
+      provider: 'duckduckgo',
+      results: [
+        {
+          title: 'REFSIX',
+          url: 'https://refsix.com/',
+          snippet: 'Football referee app',
+          availability: { ok: true, status: 200, url: 'https://refsix.com/', reason: 'ok' },
+        },
+      ],
+      filteredInaccessibleResults: 0,
+      inaccessibleResultsDetected: false,
+      truncated: false,
+    }),
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'REFSIX',
+      content: 'verified content',
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'research this');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[1]?.status, 'completed');
+  assert.equal(session.toolEvents[1]?.result?.runtimeRedirected, true);
+  assert.equal(session.toolEvents[1]?.result?.requestedUrl, 'https://www.fifa.com/about-fifa/development/referee-technology');
+  assert.equal(session.toolEvents[1]?.result?.url, 'https://refsix.com/');
+  assert.match(session.toolEvents[1]?.resultPreview ?? '', /Reused exact search-result URL/i);
+});
+
 test('runtime can stop an in-flight request', async () => {
   const provider = {
     async getCapabilities() {

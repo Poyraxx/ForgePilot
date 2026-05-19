@@ -1,24 +1,28 @@
 import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'https://esm.sh/react@18.3.1';
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import htm from 'https://esm.sh/htm@3.1.1';
+import { parseAgentEnvelope } from '../core/envelope.js';
+import {
+  DEFAULT_LANGUAGE,
+  LANGUAGE_OPTIONS,
+  getLanguageLocale,
+  resolveLanguage,
+  resolveLanguageFromLocale,
+  translate,
+} from './i18n/index.js';
 
 const html = htm.bind(React.createElement);
 const THEME_STORAGE_KEY = 'cokgizlicoder.theme';
 const DEFAULT_THEME = 'codex';
-const DEFAULT_LANGUAGE = 'en';
-const LANGUAGE_OPTIONS = [
-  { id: 'en', label: 'English' },
-  { id: 'tr', label: 'Türkçe' },
-];
 const DEFAULT_MODEL_SETTINGS = Object.freeze({
   contextLength: 32768,
   temperature: 0.2,
   systemPrompt: '',
 });
 const NAV_ITEMS = [
-  { id: 'new', label: 'Yeni sohbet', badge: '+' },
-  { id: 'search', label: 'Arama', badge: '/' },
-  { id: 'automations', label: 'Otomasyonlar', badge: 'AU' },
+  { id: 'new', labelKey: 'nav.new', badge: '+' },
+  { id: 'search', labelKey: 'nav.search', badge: '/' },
+  { id: 'automations', labelKey: 'nav.automations', badge: 'AU' },
 ];
 const THEME_OPTIONS = [
   {
@@ -40,109 +44,12 @@ const THEME_OPTIONS = [
     swatches: ['#ece6da', '#f7f2e9', '#cb6c3c'],
   },
 ];
-const QUICK_PROMPTS = [
-  'Workspace yapisini inceleyip bir ozet cikar.',
-  'Bu proje icin temiz bir README olustur.',
-  'Tum tool tanimlarini bul ve riskli olanlari listele.',
-];
-const AUTOMATION_GROUPS = [
-  {
-    id: 'status-reports',
-    title: 'Status reports',
-    cards: [
-      {
-        id: 'daily-standup',
-        badge: 'DS',
-        tone: 'violet',
-        description: 'Bir onceki gunun degisikliklerini ve bugun odagini kisa bir standup ozeti halinde cikar.',
-        prompt:
-          'Bu workspace icin gunluk standup ozeti uret: dun ne yapildi, bugun ne oncelikli, hangi riskler takip edilmeli?',
-      },
-      {
-        id: 'weekly-digest',
-        badge: 'WD',
-        tone: 'mint',
-        description: 'Haftalik ilerlemeyi, dikkat ceken dosya degisikliklerini ve acik riskleri yonetici ozeti gibi toparla.',
-        prompt:
-          'Bu workspace icin haftalik ilerleme ozeti hazirla. Onemli dosya degisikliklerini, riskleri ve sonraki adimlari listele.',
-      },
-      {
-        id: 'review-brief',
-        badge: 'RB',
-        tone: 'slate',
-        description: 'Bekleyen isleri ekip arkadasina teslim eder gibi kisa, okunabilir bir devir notuna cevir.',
-        prompt:
-          'Bu workspace icin ekip devri notu hazirla. Tamamlananlar, bekleyenler ve dikkat edilmesi gereken riskleri toparla.',
-      },
-    ],
-  },
-  {
-    id: 'release-prep',
-    title: 'Release prep',
-    cards: [
-      {
-        id: 'release-notes',
-        badge: 'RN',
-        tone: 'amber',
-        description: 'Onemli degisiklikleri kullanici diliyle release notes taslagi haline getir.',
-        prompt:
-          'Bu workspace icin release notes taslagi yaz. Kullaniciya gorunen degisiklikleri ve bilinen sinirlamalari ayir.',
-      },
-      {
-        id: 'ship-checklist',
-        badge: 'QC',
-        tone: 'green',
-        description: 'Yayin oncesi dogrulama listesi cikar: testler, riskli dosyalar, eksik belgeler ve dikkat noktalarini tara.',
-        prompt:
-          'Bu proje icin yayin oncesi checklist hazirla. Test, dokumantasyon, riskli dosyalar ve acik sorulari listele.',
-      },
-      {
-        id: 'changelog-refresh',
-        badge: 'CL',
-        tone: 'rose',
-        description: 'Son donemdeki onemli farklari toplayip changelog mantiginda guncelleme ozeti uret.',
-        prompt:
-          'Bu workspace icin changelog ozeti hazirla. Son degisiklikleri kategori bazinda gruplayip kisa bir taslak cikar.',
-      },
-    ],
-  },
-  {
-    id: 'incidents',
-    title: 'Incidents & triage',
-    cards: [
-      {
-        id: 'failure-scan',
-        badge: 'CI',
-        tone: 'cyan',
-        description: 'Kritik hata sinyallerini, kirilgan alanlari ve tekrar eden sorunlari bulup triage listesi olustur.',
-        prompt:
-          'Bu workspace icinde olasi kirilgan alanlari ve hata risklerini bul. Triage listesi ve en kritik duzeltmeleri oner.',
-      },
-      {
-        id: 'minimal-fix',
-        badge: 'MF',
-        tone: 'slate',
-        description: 'Sorunlu alani tespit edip minimum, en dusuk riskli duzeltme yolunu oner.',
-        prompt:
-          'Bu proje icin minimum riskli duzeltme plani cikar. En olasi hata alanlarini ve kucuk ama etkili mudahaleleri belirt.',
-      },
-      {
-        id: 'regression-guard',
-        badge: 'RG',
-        tone: 'indigo',
-        description: 'Regresyonlari onlemek icin test, guardrail ve izleme onerileri cikar.',
-        prompt:
-          'Bu workspace icin regresyon onleme plani yaz. Hangi testler, guardrail’ler ve izleme noktalari eklenmeli?',
-      },
-    ],
-  },
-];
 const TOP_MENU_ITEMS = [
-  { id: 'dosya', label: 'Dosya' },
-  { id: 'duzenle', label: 'Duzenle' },
-  { id: 'goruntule', label: 'Goruntule' },
-  { id: 'pencere', label: 'Pencere' },
-  { id: 'yardim', label: 'Yardim' },
+  { id: 'dosya', labelKey: 'menu.top.dosya' },
+  { id: 'duzenle', labelKey: 'menu.top.duzenle' },
+  { id: 'goruntule', labelKey: 'menu.top.goruntule' },
+  { id: 'pencere', labelKey: 'menu.top.pencere' },
+  { id: 'yardim', labelKey: 'menu.top.yardim' },
 ];
 const TOP_MENU_ACTIONS = {
   app: [
@@ -175,16 +82,17 @@ const TOP_MENU_ACTIONS = {
     { id: 'window-close', label: 'Kapat' },
   ],
   yardim: [
+    { id: 'export-progress-report', label: 'Export progress report' },
     { id: 'fill-tool-prompt', label: 'Tool ozetini iste' },
     { id: 'fill-command-prompt', label: 'Komut calistirma gorevi' },
     { id: 'fill-risk-prompt', label: 'Riskli toollari listele' },
   ],
 };
 const SETTINGS_SECTIONS = [
-  { id: 'general', label: 'General' },
-  { id: 'mcp', label: 'MCP' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'about', label: 'About' },
+  { id: 'general', labelKey: 'settings.section.general' },
+  { id: 'mcp', labelKey: 'settings.section.mcp' },
+  { id: 'appearance', labelKey: 'settings.section.appearance' },
+  { id: 'about', labelKey: 'settings.section.about' },
 ];
 const CONTEXT_LENGTH_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const MUTATING_TOOL_NAMES = new Set(['fs_write', 'fs_patch', 'fs_mkdir', 'fs_delete']);
@@ -227,436 +135,8 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   'rb',
   'sql',
 ]);
-const TRANSLATIONS = {
-  en: {
-    'nav.new': 'New chat',
-    'nav.search': 'Search',
-    'nav.automations': 'Automations',
-    'menu.top.dosya': 'File',
-    'menu.top.duzenle': 'Edit',
-    'menu.top.goruntule': 'View',
-    'menu.top.pencere': 'Window',
-    'menu.top.yardim': 'Help',
-    'menu.action.new-thread': 'New chat',
-    'menu.action.quick-chat': 'Quick chat',
-    'menu.action.choose-workspace': 'Open folder...',
-    'menu.action.open-about': 'About ForgePilot',
-    'menu.action.window-close': 'Exit',
-    'menu.action.create-session': 'Start session',
-    'menu.action.refresh-models': 'Refresh models',
-    'menu.action.open-settings': 'Settings...',
-    'menu.action.clear-composer': 'Clear composer',
-    'menu.action.fill-summary-prompt': 'Ask for a workspace summary',
-    'menu.action.fill-readme-prompt': 'Draft a README task',
-    'menu.action.toggle-runtime-settings': 'Runtime settings',
-    'menu.action.open-appearance-settings': 'Appearance settings',
-    'menu.action.focus-last-event': 'Focus last tool event',
-    'menu.action.window-minimize': 'Minimize',
-    'menu.action.window-toggle-maximize': 'Maximize / restore',
-    'menu.action.fill-tool-prompt': 'Summarize the tool surface',
-    'menu.action.fill-command-prompt': 'Run a command task',
-    'menu.action.fill-risk-prompt': 'List risky tools',
-    'settings.title': 'Settings',
-    'settings.previewMode': 'preview mode',
-    'settings.localRuntime': 'local runtime',
-    'settings.section.general': 'General',
-    'settings.section.mcp': 'MCP',
-    'settings.section.appearance': 'Appearance',
-    'settings.section.about': 'About',
-    'settings.header.general': 'General',
-    'settings.header.generalCopy': 'Manage workspace, model, language, and runtime preferences.',
-    'settings.header.mcp': 'MCP',
-    'settings.header.mcpCopy': 'Add stdio MCP servers and expose their tools to every session.',
-    'settings.header.appearance': 'Appearance',
-    'settings.header.appearanceCopy': 'Tune the look and feel of the workspace.',
-    'settings.header.about': 'About',
-    'settings.header.aboutCopy': 'A quick summary of the app and current session.',
-    'settings.close': 'Close',
-    'settings.app.title': 'App',
-    'settings.app.copy': 'Program-wide defaults live here and are persisted automatically.',
-    'settings.language.label': 'Language',
-    'settings.language.help': 'Switch the interface language for the desktop app.',
-    'settings.workspace.title': 'Workspace',
-    'settings.workspace.copy': 'You can also change this from App menu > Open Folder.',
-    'settings.workspace.currentFolder': 'Current folder',
-    'settings.workspace.openFolder': 'Open Folder...',
-    'settings.provider.title': 'Provider',
-    'settings.provider.copy': 'Switch between LLM services while keeping the same tool/runtime behavior.',
-    'settings.provider.refresh': 'Refresh models',
-    'settings.provider.loading': 'Loading...',
-    'settings.provider.select': 'Provider',
-    'settings.runtimeDefaults.title': 'Runtime Defaults',
-    'settings.runtimeDefaults.copy': 'Context length and advanced runtime settings stay here.',
-    'settings.runtimeDefaults.note': 'Model and access selection now live directly in the composer.',
-    'settings.runtime.title': 'Runtime',
-    'settings.runtime.copy': 'Context length, temperature, and system prompt settings.',
-    'settings.runtime.show': 'Show runtime settings',
-    'settings.runtime.hide': 'Hide runtime settings',
-    'settings.runtime.contextLength': 'Context length',
-    'settings.runtime.contextHelp': 'Choose how much conversation memory the model keeps available.',
-    'settings.runtime.temperature': 'Temperature',
-    'settings.runtime.systemPrompt': 'System prompt',
-    'settings.runtime.syncing': 'Changes are being applied to the active session automatically.',
-    'settings.runtime.synced': 'Changes apply to the active session automatically.',
-    'settings.runtime.newChats': 'Changes will be used automatically for new chats.',
-    'settings.mcp.title': 'MCP Servers',
-    'settings.mcp.copy': 'Every tool from enabled stdio MCP servers becomes available to the agent.',
-    'settings.mcp.note': 'Server state refreshes as soon as you save. Failed servers stay visible with their error text.',
-    'settings.mcp.connected': 'connected',
-    'settings.mcp.disabled': 'disabled',
-    'settings.mcp.error': 'error',
-    'settings.mcp.enable': 'Enable',
-    'settings.mcp.disable': 'Disable',
-    'settings.mcp.remove': 'Remove',
-    'settings.mcp.empty': 'No MCP server has been added yet.',
-    'settings.mcp.newTitle': 'Add a new MCP server',
-    'settings.mcp.name': 'Name',
-    'settings.mcp.command': 'Command',
-    'settings.mcp.args': 'Args',
-    'settings.mcp.cwd': 'Working directory',
-    'settings.mcp.env': 'Environment',
-    'settings.mcp.add': 'Add MCP',
-    'settings.mcp.connecting': 'Connecting...',
-    'settings.appearance.title': 'Theme',
-    'settings.appearance.copy': 'Choose the interaction surface here.',
-    'settings.about.copy': 'Multi-provider local agent workspace.',
-    'settings.about.mode': 'Mode',
-    'settings.about.desktopRuntime': 'Desktop runtime',
-    'settings.about.workspace': 'Workspace',
-    'settings.about.provider': 'Provider',
-    'settings.about.model': 'Model',
-    'settings.about.notSelected': 'not selected',
-    'settings.about.highlightsTitle': 'Highlights',
-    'settings.about.highlightsCopy': 'Desktop agent workspace for local and hosted LLM workflows.',
-    'settings.about.providersTitle': 'Providers',
-    'settings.about.providersCopy':
-      'Ollama, OpenAI, Anthropic, and OpenAI-compatible endpoints.',
-    'settings.about.toolsTitle': 'Tools',
-    'settings.about.toolsCopy':
-      'Files, patches, search, terminal commands, web lookup, plugins, and MCP tools.',
-    'settings.about.documentsTitle': 'Documents',
-    'settings.about.documentsCopy':
-      'Reads PDF, DOCX, XLSX, PPTX, ODT, ODS, and ODP attachments inside a chat thread.',
-    'theme.codex.label': 'Codex Dark',
-    'theme.codex.description': 'Dark workspace surface with a restrained blue accent.',
-    'theme.graphite.label': 'Graphite',
-    'theme.graphite.description': 'Warmer grays with a cyan accent.',
-    'theme.paper.label': 'Paper',
-    'theme.paper.description': 'Light canvas, dark text, copper accent.',
-    'left.projects': 'Projects',
-    'left.chats': 'Chats',
-    'left.theme': 'Theme',
-    'left.deleteChat': 'Delete chat',
-    'left.deleteChatLabel': 'Delete "{title}"',
-    'search.placeholder': 'Search chats',
-    'search.recent': 'Recent chats',
-    'search.matches': 'Matching chats',
-    'search.empty': 'No chats matched this search.',
-    'thread.kicker': 'Build an agent workspace',
-    'thread.emptyTitle': 'This thread is ready.',
-    'thread.emptyCopy': 'Choose a workspace, pick a model, and ask the composer below to write files, search, or run commands.',
-    'quick.summary': 'Inspect the workspace structure and produce a summary.',
-    'quick.readme': 'Draft a clean README for this project.',
-    'quick.tools': 'Find all tool definitions and list the risky ones.',
-    'automation.title': 'Automations',
-    'automation.copy': 'Automate recurring work with scheduled chats and reusable task flows.',
-    'automation.more': 'Learn more',
-    'automation.morePrompt': 'Generate reusable automation ideas for this workspace and suggest a schedule for each one.',
-    'automation.statusReports': 'Status reports',
-    'automation.releasePrep': 'Release prep',
-    'automation.incidents': 'Incidents & triage',
-    'automation.cardReady': 'Prepare the automation prompt in chat',
-    'automation.dailyStandup': 'Summarize the previous day and today’s focus in a short standup.',
-    'automation.weeklyDigest': 'Turn the week into a manager-friendly digest with risks and next steps.',
-    'automation.reviewBrief': 'Prepare a concise handoff note for a teammate.',
-    'automation.releaseNotes': 'Draft release notes from the most important changes.',
-    'automation.shipChecklist': 'Create a pre-ship checklist for tests, docs, and risky files.',
-    'automation.changelog': 'Build a changelog-style recap of the latest updates.',
-    'automation.failureScan': 'Find fragile areas and produce a triage list.',
-    'automation.minimalFix': 'Suggest the smallest, lowest-risk fix path.',
-    'automation.regressionGuard': 'Outline tests and guardrails to reduce regressions.',
-    'permission.full_access.label': 'Full Access',
-    'permission.ask.label': 'Ask',
-    'permission.read_only.label': 'Read Only',
-    'permission.full_access.description': 'Tools run directly inside the selected workspace.',
-    'permission.ask.description': 'Writing, deleting, and command tools require approval first.',
-    'permission.read_only.description': 'Only read and inspection tools stay available.',
-    'capability.unknown': 'unknown',
-    'capability.native': 'native tools',
-    'capability.emulated': 'emulated tools',
-    'status.providerLoading': 'Refreshing models via {provider}...',
-    'status.providerLoaded': '{count} models found.',
-    'status.providerCached': 'Saved model ready: {model}',
-    'status.providerNotLoaded': 'Model list for {provider} has not been loaded yet.',
-    'status.providerPreserved': 'Model refresh failed. Keeping the current model: {model}',
-    'status.providerError': '{provider} connection: {message}',
-    'status.providerUnknown': 'Model list has not been loaded yet.',
-    'status.notificationTitle': 'Provider notice',
-    'status.workspaceReady': 'Workspace ready',
-    'status.firstToolCall': 'The first tool call will appear here.',
-    'status.noSelectedTool': 'No tool event is selected yet.',
-    'status.summary': 'Summary',
-    'status.arguments': 'Arguments',
-    'status.rawResult': 'Raw result',
-    'status.diff': 'Diff',
-    'status.progress': 'Progress',
-    'status.completed': 'Completed',
-    'status.plugins': 'Plugins',
-    'status.liveActivity': 'Live activity',
-    'status.preparing': 'Preparing',
-    'status.running': 'Running',
-    'status.queued': 'Queued',
-    'status.pendingApproval': 'Awaiting approval',
-    'status.stopping': 'Stopping',
-    'status.thinking': 'Thinking',
-    'status.working': 'The model is currently working through a response or tool plan.',
-    'chat.you': 'You',
-    'chat.agent': 'Agent',
-    'chat.untitled': 'New chat',
-    'change.filesChanged': '{count} files changed',
-    'change.inspect': 'Inspect',
-    'composer.pendingPlaceholder': 'Resolve the pending approval before sending another message...',
-    'composer.placeholder': 'Describe a task for the local workspace...',
-    'composer.addAttachment': 'Add file or image',
-    'composer.providerTitle': 'Choose provider',
-    'composer.modelMissing': 'No models found',
-    'composer.toolsCount': '{count} tools',
-    'composer.send': 'Send',
-    'composer.stop': 'Stop request',
-    'composer.attachmentImage': 'Image',
-    'composer.attachmentFile': 'File',
-    'composer.removeAttachment': 'Remove attachment "{name}"',
-    'approval.required': 'Approval required',
-    'approval.copy': 'This command is waiting. Approve or deny it before continuing.',
-    'approval.approve': 'Approve',
-    'approval.deny': 'Deny',
-    'notification.dismiss': 'Dismiss',
-    'provider.refresh.apiMissing': 'Model refresh is not available right now.',
-    'mcp.commandRequired': 'Enter at least a command before adding an MCP server.',
-    'prompt.quickChat': 'Give me a quick list of the next best steps for this workspace.',
-    'prompt.toolSummary': 'Summarize the current workspace tool surface and explain what each tool is for.',
-    'prompt.commandTask': 'Run the necessary command inside the workspace and explain the output.',
-  },
-  tr: {
-    'nav.new': 'Yeni sohbet',
-    'nav.search': 'Arama',
-    'nav.automations': 'Otomasyonlar',
-    'menu.top.dosya': 'Dosya',
-    'menu.top.duzenle': 'Düzenle',
-    'menu.top.goruntule': 'Görüntüle',
-    'menu.top.pencere': 'Pencere',
-    'menu.top.yardim': 'Yardım',
-    'menu.action.new-thread': 'Yeni sohbet',
-    'menu.action.quick-chat': 'Hızlı sohbet',
-    'menu.action.choose-workspace': 'Klasör aç...',
-    'menu.action.open-about': 'ForgePilot hakkında',
-    'menu.action.window-close': 'Çıkış',
-    'menu.action.create-session': 'Oturumu başlat',
-    'menu.action.refresh-models': 'Modelleri yenile',
-    'menu.action.open-settings': 'Ayarlar...',
-    'menu.action.clear-composer': 'Yazı alanını temizle',
-    'menu.action.fill-summary-prompt': 'Workspace özeti iste',
-    'menu.action.fill-readme-prompt': 'README görevi koy',
-    'menu.action.toggle-runtime-settings': 'Runtime ayarları',
-    'menu.action.open-appearance-settings': 'Görünüm ayarları',
-    'menu.action.focus-last-event': 'Son tool eventini seç',
-    'menu.action.window-minimize': 'Simge durumuna küçült',
-    'menu.action.window-toggle-maximize': 'Büyüt / geri al',
-    'menu.action.fill-tool-prompt': 'Tool yüzeyini özetle',
-    'menu.action.fill-command-prompt': 'Komut görevi doldur',
-    'menu.action.fill-risk-prompt': 'Riskli toolları listele',
-    'settings.title': 'Ayarlar',
-    'settings.previewMode': 'önizleme modu',
-    'settings.localRuntime': 'yerel çalışma',
-    'settings.section.general': 'Genel',
-    'settings.section.mcp': 'MCP',
-    'settings.section.appearance': 'Görünüm',
-    'settings.section.about': 'Hakkında',
-    'settings.header.general': 'Genel',
-    'settings.header.generalCopy': 'Workspace, model, dil ve runtime tercihlerini yönet.',
-    'settings.header.mcp': 'MCP',
-    'settings.header.mcpCopy': 'stdio MCP serverlarını ekle ve araçlarını tüm oturumlara aç.',
-    'settings.header.appearance': 'Görünüm',
-    'settings.header.appearanceCopy': 'Uygulamanın görünümünü buradan ayarla.',
-    'settings.header.about': 'Hakkında',
-    'settings.header.aboutCopy': 'Uygulama ve aktif oturum özeti.',
-    'settings.close': 'Kapat',
-    'settings.app.title': 'Uygulama',
-    'settings.app.copy': 'Program geneli varsayılanlar burada tutulur ve otomatik kaydedilir.',
-    'settings.language.label': 'Dil',
-    'settings.language.help': 'Masaüstü uygulamasının arayüz dilini değiştir.',
-    'settings.workspace.title': 'Workspace',
-    'settings.workspace.copy': 'Bunu App menu > Open Folder üzerinden de değiştirebilirsin.',
-    'settings.workspace.currentFolder': 'Geçerli klasör',
-    'settings.workspace.openFolder': 'Klasör Aç...',
-    'settings.provider.title': 'Provider',
-    'settings.provider.copy': 'Aynı tool/runtime mantığıyla farklı LLM servisleri arasında geçiş yap.',
-    'settings.provider.refresh': 'Modelleri yenile',
-    'settings.provider.loading': 'Yükleniyor...',
-    'settings.provider.select': 'Provider',
-    'settings.runtimeDefaults.title': 'Runtime Varsayılanları',
-    'settings.runtimeDefaults.copy': 'Context length ve ileri runtime ayarları burada kalır.',
-    'settings.runtimeDefaults.note': 'Model ve erişim seçimleri artık doğrudan composer içinde.',
-    'settings.runtime.title': 'Runtime',
-    'settings.runtime.copy': 'Context length, temperature ve system prompt ayarları.',
-    'settings.runtime.show': 'Runtime ayarlarını göster',
-    'settings.runtime.hide': 'Runtime ayarlarını gizle',
-    'settings.runtime.contextLength': 'Context length',
-    'settings.runtime.contextHelp': 'Modelin konuşma hafızasında ne kadar bağlam tutacağını seç.',
-    'settings.runtime.temperature': 'Temperature',
-    'settings.runtime.systemPrompt': 'System prompt',
-    'settings.runtime.syncing': 'Değişiklikler aktif oturuma otomatik uygulanıyor.',
-    'settings.runtime.synced': 'Değişiklikler aktif oturuma otomatik uygulanır.',
-    'settings.runtime.newChats': 'Değişiklikler yeni sohbetlerde otomatik kullanılır.',
-    'settings.mcp.title': 'MCP Serverları',
-    'settings.mcp.copy': 'Etkin stdio MCP serverlarındaki tüm tool’lar agente açılır.',
-    'settings.mcp.note': 'Kaydettiğin anda durum yenilenir. Bağlanamayan serverlar hata metniyle görünür kalır.',
-    'settings.mcp.connected': 'bağlı',
-    'settings.mcp.disabled': 'kapalı',
-    'settings.mcp.error': 'hata',
-    'settings.mcp.enable': 'Aç',
-    'settings.mcp.disable': 'Kapat',
-    'settings.mcp.remove': 'Sil',
-    'settings.mcp.empty': 'Henüz bir MCP server eklenmedi.',
-    'settings.mcp.newTitle': 'Yeni MCP ekle',
-    'settings.mcp.name': 'İsim',
-    'settings.mcp.command': 'Komut',
-    'settings.mcp.args': 'Argümanlar',
-    'settings.mcp.cwd': 'Çalışma dizini',
-    'settings.mcp.env': 'Ortam değişkenleri',
-    'settings.mcp.add': 'MCP ekle',
-    'settings.mcp.connecting': 'Bağlanıyor...',
-    'settings.appearance.title': 'Tema',
-    'settings.appearance.copy': 'Etkileşim yüzeyini burada seç.',
-    'settings.about.copy': 'Çoklu provider destekli yerel agent workspace.',
-    'settings.about.mode': 'Mod',
-    'settings.about.desktopRuntime': 'Masaüstü çalışma zamanı',
-    'settings.about.workspace': 'Workspace',
-    'settings.about.provider': 'Provider',
-    'settings.about.model': 'Model',
-    'settings.about.notSelected': 'seçilmedi',
-    'settings.about.highlightsTitle': 'Öne çıkanlar',
-    'settings.about.highlightsCopy': 'Yerel ve hosted LLM akışları için masaüstü agent workspace.',
-    'settings.about.providersTitle': 'Providerlar',
-    'settings.about.providersCopy':
-      'Ollama, OpenAI, Anthropic ve OpenAI-compatible endpointler.',
-    'settings.about.toolsTitle': 'Toollar',
-    'settings.about.toolsCopy':
-      'Dosyalar, patch işlemleri, arama, terminal komutları, web araması, pluginler ve MCP toolları.',
-    'settings.about.documentsTitle': 'Dokümanlar',
-    'settings.about.documentsCopy':
-      'Bir sohbet içinde PDF, DOCX, XLSX, PPTX, ODT, ODS ve ODP eklerini okuyabilir.',
-    'theme.codex.label': 'Codex Dark',
-    'theme.codex.description': 'Koyu çalışma yüzeyi, ölçülü mavi vurgu.',
-    'theme.graphite.label': 'Graphite',
-    'theme.graphite.description': 'Daha sıcak gri tonlar ve camgöbeği vurgu.',
-    'theme.paper.label': 'Paper',
-    'theme.paper.description': 'Açık zemin, koyu metin ve bakır vurgu.',
-    'left.projects': 'Projeler',
-    'left.chats': 'Sohbetler',
-    'left.theme': 'Tema',
-    'left.deleteChat': 'Sohbeti sil',
-    'left.deleteChatLabel': '"{title}" sohbetini sil',
-    'search.placeholder': 'Sohbetleri ara',
-    'search.recent': 'Son sohbetler',
-    'search.matches': 'Eşleşen sohbetler',
-    'search.empty': 'Bu aramaya uyan sohbet bulunamadı.',
-    'thread.kicker': 'Agent workspace aracı oluştur',
-    'thread.emptyTitle': 'Bu thread hazır.',
-    'thread.emptyCopy': 'Workspace seç, modeli ayarla ve aşağıdaki composer’dan dosya yazma, arama veya komut çalıştırma iste.',
-    'quick.summary': 'Workspace yapısını inceleyip bir özet çıkar.',
-    'quick.readme': 'Bu proje için temiz bir README oluştur.',
-    'quick.tools': 'Tüm tool tanımlarını bul ve riskli olanları listele.',
-    'automation.title': 'Otomasyonlar',
-    'automation.copy': 'Planlanmış sohbetler ve tekrar kullanılabilir görev akışlarıyla işleri otomatikleştir.',
-    'automation.more': 'Daha fazla bilgi',
-    'automation.morePrompt': 'Bu workspace için tekrar kullanılabilir otomasyon fikirleri üret ve her biri için zamanlama öner.',
-    'automation.statusReports': 'Durum raporları',
-    'automation.releasePrep': 'Release hazırlığı',
-    'automation.incidents': 'Olaylar ve triage',
-    'automation.cardReady': 'Otomasyon prompt’unu sohbete hazırla',
-    'automation.dailyStandup': 'Bir önceki günü ve bugünün odağını kısa standup olarak özetle.',
-    'automation.weeklyDigest': 'Haftayı riskler ve sonraki adımlarla yönetici özeti haline getir.',
-    'automation.reviewBrief': 'Bir ekip arkadaşı için kısa bir devir notu hazırla.',
-    'automation.releaseNotes': 'En önemli değişikliklerden release notes taslağı çıkar.',
-    'automation.shipChecklist': 'Testler, dokümanlar ve riskli dosyalar için yayın öncesi checklist hazırla.',
-    'automation.changelog': 'Son güncellemeleri changelog benzeri bir özette topla.',
-    'automation.failureScan': 'Kırılgan alanları bul ve triage listesi çıkar.',
-    'automation.minimalFix': 'En küçük ve en düşük riskli düzeltme yolunu öner.',
-    'automation.regressionGuard': 'Regresyonları azaltacak test ve guardrail planı yaz.',
-    'permission.full_access.label': 'Tam erişim',
-    'permission.ask.label': 'Sor',
-    'permission.read_only.label': 'Salt okunur',
-    'permission.full_access.description': 'Tool çağrıları seçili workspace içinde doğrudan çalışır.',
-    'permission.ask.description': 'Yazma, silme ve komut araçları önce onay ister.',
-    'permission.read_only.description': 'Yalnızca okuma ve inceleme araçları açık kalır.',
-    'capability.unknown': 'bilinmiyor',
-    'capability.native': 'native tools',
-    'capability.emulated': 'emulated tools',
-    'status.providerLoading': 'Modeller {provider} üzerinden yenileniyor...',
-    'status.providerLoaded': '{count} model bulundu.',
-    'status.providerCached': 'Kayıtlı model hazır: {model}',
-    'status.providerNotLoaded': '{provider} için model listesi henüz yüklenmedi.',
-    'status.providerPreserved': 'Model yenileme başarısız oldu. Aktif model korunuyor: {model}',
-    'status.providerError': '{provider} bağlantısı: {message}',
-    'status.providerUnknown': 'Model listesi henüz yüklenmedi.',
-    'status.notificationTitle': 'Provider bildirimi',
-    'status.workspaceReady': 'Workspace hazır',
-    'status.firstToolCall': 'İlk tool çağrısı burada görünecek.',
-    'status.noSelectedTool': 'Henüz seçili bir tool eventi yok.',
-    'status.summary': 'Özet',
-    'status.arguments': 'Argümanlar',
-    'status.rawResult': 'Ham sonuç',
-    'status.diff': 'Diff',
-    'status.progress': 'İlerleme',
-    'status.completed': 'Tamamlandı',
-    'status.plugins': 'Pluginler',
-    'status.liveActivity': 'Canlı akış',
-    'status.preparing': 'Hazırlanıyor',
-    'status.running': 'Çalışıyor',
-    'status.queued': 'Sırada',
-    'status.pendingApproval': 'Onay bekleniyor',
-    'status.stopping': 'Durduruluyor',
-    'status.thinking': 'Düşünüyor',
-    'status.working': 'Model şu anda yanıt ve tool planı üzerinde çalışıyor.',
-    'chat.you': 'You',
-    'chat.agent': 'Agent',
-    'chat.untitled': 'Yeni sohbet',
-    'change.filesChanged': '{count} dosya değiştirildi',
-    'change.inspect': 'İncele',
-    'composer.pendingPlaceholder': 'Bekleyen onayı çözdükten sonra yeni mesaj gönderebilirsin...',
-    'composer.placeholder': 'Yerel workspace için bir görev yaz...',
-    'composer.addAttachment': 'Dosya veya görsel ekle',
-    'composer.providerTitle': 'Provider seç',
-    'composer.modelMissing': 'Model bulunamadı',
-    'composer.toolsCount': '{count} tools',
-    'composer.send': 'Gönder',
-    'composer.stop': 'İsteği durdur',
-    'composer.attachmentImage': 'Görsel',
-    'composer.attachmentFile': 'Dosya',
-    'composer.removeAttachment': '"{name}" ekini kaldır',
-    'approval.required': 'Onay gerekli',
-    'approval.copy': 'Bu komut beklemede. Devam etmek için onayla veya reddet.',
-    'approval.approve': 'Onayla',
-    'approval.deny': 'Reddet',
-    'notification.dismiss': 'Kapat',
-    'provider.refresh.apiMissing': 'Model yenileme şu anda kullanılamıyor.',
-    'mcp.commandRequired': 'MCP eklemek için en az bir komut gir.',
-    'prompt.quickChat': 'Bu workspace için hızlı bir sonraki adım listesi çıkar.',
-    'prompt.toolSummary': 'Mevcut workspace tool yüzeyini özetle ve her birinin ne işe yaradığını açıkla.',
-    'prompt.commandTask': 'Workspace içinde gereken komutu çalıştır ve çıktısını yorumla.',
-  },
-};
-
-function translate(language, key, variables = {}) {
-  const selected = TRANSLATIONS[language] ?? TRANSLATIONS[DEFAULT_LANGUAGE];
-  const fallback = TRANSLATIONS[DEFAULT_LANGUAGE];
-  const template = selected?.[key] ?? fallback?.[key] ?? key;
-
-  return template.replace(/\{(\w+)\}/g, (_match, token) =>
-    Object.prototype.hasOwnProperty.call(variables, token) ? String(variables[token]) : ''
-  );
-}
+const LIVE_STREAM_MAX_CHARS = 1200;
+const LIVE_STREAM_MAX_LINES = 18;
 
 function getThemeOptions(t) {
   return THEME_OPTIONS.map((theme) => ({
@@ -762,6 +242,17 @@ function getPermissionLabel(t, presetId) {
 
 function getPermissionDescription(t, presetId) {
   return t(`permission.${presetId}.description`);
+}
+
+function resolveUiErrorText(t, errorCode, errorVariables = {}, fallbackMessage = '') {
+  if (errorCode) {
+    const localized = t(errorCode, errorVariables);
+    if (localized && localized !== errorCode) {
+      return localized;
+    }
+  }
+
+  return String(fallbackMessage ?? '').trim();
 }
 
 function createPreviewApi() {
@@ -934,6 +425,7 @@ function createPreviewApi() {
         { name: 'search_text', description: 'Search text' },
         { name: 'web_search', description: 'Search the web' },
         { name: 'web_fetch', description: 'Fetch a web page' },
+        { name: 'browser_fetch', description: 'Render and fetch a page in a browser' },
         { name: 'run_command', description: 'Run shell command' },
       ],
       plugins: [
@@ -951,6 +443,8 @@ function createPreviewApi() {
       return {
         appName: 'ForgePilot',
         defaultLanguage: previewAppState.preferences.language,
+        languageWasExplicit: true,
+        supportedLanguages: LANGUAGE_OPTIONS.map((option) => option.id),
         defaultWorkspace: previewAppState.preferences.workspaceRoot,
         defaultProviderId: previewAppState.preferences.providerId,
         providerConfigs: previewAppState.preferences.providerConfigs,
@@ -1281,6 +775,28 @@ function createPreviewApi() {
         activeSession: currentSession,
       };
     },
+    async exportProgressReport(payload = {}) {
+      const sessionId = payload?.sessionId ?? currentSession?.id ?? 'preview-session';
+      const content = [
+        '# ForgePilot Preview Progress Debug Report',
+        '',
+        `Session: ${sessionId}`,
+        `Generated at: ${new Date().toISOString()}`,
+        '',
+        'Preview mode does not have native save dialogs, so this file was prepared in-browser.',
+        '',
+        '## Recent tool events',
+        ...((currentSession?.toolEvents ?? []).map(
+          (event) => `- ${event.toolName} [${event.status}] ${event.resultPreview ?? ''}`
+        )),
+      ].join('\n');
+
+      return {
+        status: 'preview',
+        fileName: `forgepilot-progress-${sessionId}-preview.md`,
+        content,
+      };
+    },
     windowControls: {
       minimize: async () => {},
       toggleMaximize: async () => ({ isMaximized: false, isFocused: true, bottomSafeArea: 0 }),
@@ -1292,6 +808,19 @@ function createPreviewApi() {
 }
 
 const api = globalThis.cokgizlicoder ?? createPreviewApi();
+
+function downloadTextFile(fileName, content) {
+  const blob = new Blob([String(content ?? '')], { type: 'text/markdown;charset=utf-8' });
+  const url = globalThis.URL.createObjectURL(blob);
+  const anchor = globalThis.document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName || 'forgepilot-progress-report.md';
+  anchor.style.display = 'none';
+  globalThis.document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  globalThis.setTimeout(() => globalThis.URL.revokeObjectURL(url), 0);
+}
 
 function normalizeModelSettings(modelSettings = DEFAULT_MODEL_SETTINGS) {
   const contextLength = Number.parseInt(
@@ -1437,12 +966,13 @@ function capabilityTag(model, permissionPreset, t) {
     : { label: t('capability.emulated'), className: 'emulated' };
 }
 
-function formatTimestamp(value) {
+function formatTimestamp(value, language = DEFAULT_LANGUAGE) {
   if (!value) {
     return '';
   }
 
-  return new Date(value).toLocaleTimeString([], {
+  const locale = getLanguageLocale(language);
+  return new Date(value).toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
   });
@@ -1465,6 +995,88 @@ function prettyToolName(toolName = '') {
   return String(toolName)
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function clampLivePreview(value = '', maxChars = LIVE_STREAM_MAX_CHARS, maxLines = LIVE_STREAM_MAX_LINES) {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const lines = normalized.split('\n');
+  const lineLimited = lines.length > maxLines
+    ? `${lines.slice(0, maxLines).join('\n')}\n…`
+    : normalized;
+
+  if (lineLimited.length <= maxChars) {
+    return lineLimited;
+  }
+
+  return `${lineLimited.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function extractProtocolToolNames(rawValue = '') {
+  const matches = [...String(rawValue ?? '').matchAll(/"name"\s*:\s*"([^"]+)"/g)];
+  return [...new Set(matches.map((match) => prettyToolName(match[1])).filter(Boolean))];
+}
+
+function extractProtocolTarget(rawValue = '') {
+  const patterns = [
+    /"path"\s*:\s*"([^"]+)"/,
+    /"url"\s*:\s*"([^"]+)"/,
+    /"query"\s*:\s*"([^"]+)"/,
+    /"command"\s*:\s*"([^"]+)"/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = String(rawValue ?? '').match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return '';
+}
+
+function summarizeLiveStreamContent(value, t) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const parsed = parseAgentEnvelope(normalized);
+  if (parsed.ok) {
+    if (parsed.envelope.mode === 'tool') {
+      const toolNames = parsed.envelope.calls.map((call) => prettyToolName(call.name)).join(', ');
+      const firstCall = parsed.envelope.calls[0];
+      const target =
+        firstCall?.arguments?.path ??
+        firstCall?.arguments?.url ??
+        firstCall?.arguments?.query ??
+        firstCall?.arguments?.command ??
+        '';
+      return [t('status.toolPlan', { tools: toolNames || t('status.toolPlanGeneric') }), target]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return clampLivePreview(parsed.envelope.message);
+  }
+
+  if (/<agent-response[\s>]/i.test(normalized)) {
+    const toolNames = extractProtocolToolNames(normalized);
+    const target = extractProtocolTarget(normalized);
+    return [
+      toolNames.length > 0
+        ? t('status.toolPlan', { tools: toolNames.join(', ') })
+        : t('status.toolPlanGeneric'),
+      target,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  return clampLivePreview(normalized);
 }
 
 function summarizeEvent(event) {
@@ -1508,12 +1120,23 @@ function summarizeEventMeta(event) {
     case 'web_search':
       return event.result?.query ?? event.arguments?.query ?? '';
     case 'web_fetch':
+    case 'browser_fetch':
       return event.result?.url ?? event.arguments?.url ?? '';
     case 'run_command':
       return event.result?.command ?? event.arguments?.command ?? '';
     default:
       return event.source ?? '';
   }
+}
+
+function formatPhaseLabel(t, phase = '') {
+  const normalized = String(phase ?? '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const translated = t(`status.phase.${normalized}`);
+  return translated === `status.phase.${normalized}` ? normalized.replace(/_/g, ' ') : translated;
 }
 
 function parseDiffLineCounts(diffText = '') {
@@ -1641,6 +1264,115 @@ function buildMessageChangeCards(session) {
   return cards;
 }
 
+function summarizeSourceSnippet(value = '', maxLength = 180) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function buildMessageSourceCards(session) {
+  const rawMessages = session?.messages ?? [];
+  const toolEvents = (session?.toolEvents ?? []).filter(
+    (event) =>
+      ['web_search', 'web_fetch', 'browser_fetch'].includes(event.toolName) &&
+      event.status === 'completed'
+  );
+
+  if (rawMessages.length === 0 || toolEvents.length === 0) {
+    return new Map();
+  }
+
+  const userMessages = rawMessages.filter((message) => message.role === 'user');
+  const cards = new Map();
+
+  for (let index = 0; index < userMessages.length; index += 1) {
+    const currentUser = userMessages[index];
+    const nextUser = userMessages[index + 1];
+    const startMarker = currentUser.createdAt ?? '';
+    const endMarker = nextUser?.createdAt ?? '9999-12-31T23:59:59.999Z';
+    const assistantMessages = rawMessages.filter(
+      (message) =>
+        message.role === 'assistant' &&
+        !message.isToolTrace &&
+        (message.createdAt ?? '') >= startMarker &&
+        (message.createdAt ?? '') < endMarker
+    );
+    const finalAssistant = assistantMessages.at(-1);
+
+    if (!finalAssistant) {
+      continue;
+    }
+
+    const turnEvents = toolEvents.filter((event) => {
+      const marker = event.completedAt ?? event.createdAt ?? '';
+      return marker >= startMarker && marker < endMarker;
+    });
+
+    if (turnEvents.length === 0) {
+      continue;
+    }
+
+    const sources = [];
+    const seenUrls = new Set();
+
+    for (const event of turnEvents) {
+      if (event.toolName === 'web_search') {
+        for (const result of event.result?.results ?? []) {
+          const url = result?.url ? String(result.url) : '';
+          if (!url || seenUrls.has(url)) {
+            continue;
+          }
+
+          seenUrls.add(url);
+          sources.push({
+            id: `${event.id}-${url}`,
+            kind: 'search',
+            eventId: event.id,
+            title: result?.title || url,
+            url,
+            snippet: summarizeSourceSnippet(result?.snippet ?? ''),
+          });
+        }
+        continue;
+      }
+
+      const url = String(event.result?.canonicalUrl ?? event.result?.url ?? event.arguments?.url ?? '').trim();
+      if (!url || seenUrls.has(url)) {
+        continue;
+      }
+
+      seenUrls.add(url);
+      sources.push({
+        id: `${event.id}-${url}`,
+        kind: event.toolName === 'browser_fetch' ? 'browser' : 'fetch',
+        eventId: event.id,
+        title: event.result?.title || url,
+        url,
+        snippet: summarizeSourceSnippet(event.result?.description || event.result?.content || ''),
+        screenshotPath: event.result?.screenshotPath || '',
+      });
+    }
+
+    if (sources.length === 0) {
+      continue;
+    }
+
+    cards.set(finalAssistant.id, {
+      totalSources: sources.length,
+      sources: sources.slice(0, 8),
+    });
+  }
+
+  return cards;
+}
+
 function baseName(absolutePath) {
   const normalized = String(absolutePath ?? '').replace(/[\\/]+$/, '');
   const parts = normalized.split(/[\\/]/).filter(Boolean);
@@ -1725,7 +1457,7 @@ function buildProjectRows(session, form, previewMode, quickPrompts, t) {
     {
       id: 'workspace-main',
       label: baseName(activeWorkspace),
-      note: previewMode ? t('settings.previewMode') : 'active workspace',
+      note: previewMode ? t('settings.previewMode') : t('left.activeWorkspace'),
       active: true,
       prompt: quickPrompts[0],
     },
@@ -1743,7 +1475,7 @@ function buildConversationRows(threads, activeThreadId, hasDraft, t, quickPrompt
     rows.unshift({
       id: 'conversation-draft',
       title: t('chat.untitled'),
-      age: 'ready',
+      age: t('time.ready'),
       active: true,
       prompt: '',
       kind: 'draft',
@@ -1755,7 +1487,7 @@ function buildConversationRows(threads, activeThreadId, hasDraft, t, quickPrompt
       {
         id: 'conversation-empty',
         title: t('thread.emptyTitle'),
-        age: 'now',
+        age: t('time.now'),
         active: true,
         prompt: quickPrompts[0],
         kind: 'draft',
@@ -1800,7 +1532,7 @@ function scoreConversationSearchMatch(thread, normalizedQuery, locale) {
 }
 
 function buildConversationSearchRows(threads, query, language = DEFAULT_LANGUAGE) {
-  const locale = language === 'tr' ? 'tr-TR' : 'en-US';
+  const locale = getLanguageLocale(language);
   const normalizedQuery = String(query ?? '').trim().toLocaleLowerCase(locale);
   const sourceRows = [...threads].sort(
     (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
@@ -1983,6 +1715,8 @@ function SettingsModal({
   modelStatusMessage,
   session,
   autoSyncingSettings,
+  onExportProgressReport,
+  exportingProgressReport,
   mcpServers,
   mcpDraft,
   onUpdateMcpDraft,
@@ -2398,7 +2132,7 @@ function SettingsModal({
                         <label>${t('settings.mcp.name')}</label>
                         <input
                           value=${mcpDraft.name}
-                          placeholder="example: GitHub MCP"
+                          placeholder=${t('settings.mcp.placeholder.name')}
                           onInput=${(event) => onUpdateMcpDraft('name', event.target.value)}
                         />
                       </div>
@@ -2406,7 +2140,7 @@ function SettingsModal({
                         <label>${t('settings.mcp.command')}</label>
                         <input
                           value=${mcpDraft.command}
-                          placeholder="example: npx"
+                          placeholder=${t('settings.mcp.placeholder.command')}
                           onInput=${(event) => onUpdateMcpDraft('command', event.target.value)}
                         />
                       </div>
@@ -2414,7 +2148,7 @@ function SettingsModal({
                         <label>${t('settings.mcp.args')}</label>
                         <input
                           value=${mcpDraft.args}
-                          placeholder="comma separated or one per line: -y, @modelcontextprotocol/server-filesystem, C:\\projects"
+                          placeholder=${t('settings.mcp.placeholder.args')}
                           onInput=${(event) => onUpdateMcpDraft('args', event.target.value)}
                         />
                       </div>
@@ -2422,7 +2156,7 @@ function SettingsModal({
                         <label>${t('settings.mcp.cwd')}</label>
                         <input
                           value=${mcpDraft.cwd}
-                          placeholder="optional"
+                          placeholder=${t('settings.mcp.placeholder.cwd')}
                           onInput=${(event) => onUpdateMcpDraft('cwd', event.target.value)}
                         />
                       </div>
@@ -2430,7 +2164,7 @@ function SettingsModal({
                         <label>${t('settings.mcp.env')}</label>
                         <textarea
                           rows="4"
-                          placeholder="GITHUB_TOKEN=...\nANOTHER_KEY=..."
+                          placeholder=${t('settings.mcp.placeholder.env')}
                           value=${mcpDraft.env}
                           onInput=${(event) => onUpdateMcpDraft('env', event.target.value)}
                         ></textarea>
@@ -2488,7 +2222,7 @@ function SettingsModal({
                     <div className="summary-list">
                       <div className="summary-row">
                         <span>${t('settings.about.mode')}</span>
-                        <strong>${previewMode ? 'Preview' : t('settings.about.desktopRuntime')}</strong>
+                        <strong>${previewMode ? t('settings.previewMode') : t('settings.about.desktopRuntime')}</strong>
                       </div>
                       <div className="summary-row">
                         <span>${t('settings.about.workspace')}</span>
@@ -2524,6 +2258,18 @@ function SettingsModal({
                         <span>${t('settings.about.documentsCopy')}</span>
                       </div>
                     </div>
+                    <div className="settings-actions-row">
+                      <button
+                        type="button"
+                        className="primary-action"
+                        disabled=${exportingProgressReport}
+                        onClick=${() => void onExportProgressReport()}
+                      >
+                        ${exportingProgressReport
+                          ? t('settings.about.exportProgressBusy')
+                          : t('settings.about.exportProgress')}
+                      </button>
+                    </div>
                   </section>
                 </div>
               `
@@ -2551,6 +2297,10 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [showRuntimeSettings, setShowRuntimeSettings] = useState(false);
+  const [livePhase, setLivePhase] = useState('');
+  const [liveStreamText, setLiveStreamText] = useState('');
+  const [liveStreamThinking, setLiveStreamThinking] = useState('');
+  const [lastRecoverableError, setLastRecoverableError] = useState('');
   const [windowState, setWindowState] = useState({
     isMaximized: false,
     isFocused: true,
@@ -2563,6 +2313,7 @@ function App() {
   const [conversationSearchQuery, setConversationSearchQuery] = useState('');
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [exportingProgressReport, setExportingProgressReport] = useState(false);
   const [autoSyncingSettings, setAutoSyncingSettings] = useState(false);
   const [savingMcp, setSavingMcp] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState(null);
@@ -2659,6 +2410,8 @@ function App() {
     .slice(-4)
     .reverse();
   const messageChangeCards = buildMessageChangeCards(session);
+  const messageSourceCards = buildMessageSourceCards(session);
+  const attachmentShelfItems = (session?.attachments ?? []).slice(-8).reverse();
   const projectRows = buildProjectRows(session, form, previewMode, quickPrompts, t);
   const conversationRows = buildConversationRows(threads, activeThreadId, !session, t, quickPrompts);
   const conversationSearchRows = buildConversationSearchRows(
@@ -2700,8 +2453,10 @@ function App() {
           : isTurnRunning
             ? t('status.thinking')
             : '';
+  const diagnosticsProviderState =
+    loadedModelsProviderId === form.providerId && !bootstrap?.providerError ? 'online' : 'attention';
   const shouldShowLiveActivity = Boolean(
-    liveStatusLabel || liveToolRows.length > 0 || isTurnRunning || isStopPending
+    liveStatusLabel || liveToolRows.length > 0 || isTurnRunning || isStopPending || liveStreamText || liveStreamThinking
   );
 
   useEffect(() => {
@@ -2746,6 +2501,28 @@ function App() {
     const unsubscribe = api.onSessionStateChange((payload) => {
       if (!payload?.session?.id) {
         return;
+      }
+
+      if (payload.phase === 'assistant_stream') {
+        setLivePhase(payload.phase);
+        setLiveStreamText(summarizeLiveStreamContent(payload.streamText ?? '', t));
+        setLiveStreamThinking(clampLivePreview(String(payload.streamThinking ?? ''), 800, 10));
+      } else if (
+        ['completed', 'error', 'cancelled', 'approval_required', 'tool_completed', 'tool_failed', 'tool_blocked'].includes(
+          payload.phase
+        )
+      ) {
+        if (payload.phase !== 'approval_required') {
+          setLiveStreamText('');
+          setLiveStreamThinking('');
+        }
+        setLivePhase(payload.phase);
+      } else if (payload.phase) {
+        setLivePhase(payload.phase);
+      }
+
+      if (payload.errorMessage) {
+        setLastRecoverableError(String(payload.errorMessage));
       }
 
       startTransition(() => {
@@ -3316,6 +3093,14 @@ function App() {
 
     try {
       const data = await api.bootstrap();
+      const bootstrapProviderError = data.providerError
+        ? resolveUiErrorText(
+            t,
+            data.providerErrorCode,
+            data.providerErrorVariables,
+            data.providerError
+          )
+        : null;
       const initialForm = data.activeSession
         ? {
             workspaceRoot: data.activeSession.workspaceRoot,
@@ -3343,15 +3128,23 @@ function App() {
             modelSettings: normalizeModelSettings(data.defaultModelSettings),
           };
 
+      const systemLanguage = resolveLanguageFromLocale(globalThis.navigator?.language ?? '');
+      const nextLanguage = data.languageWasExplicit
+        ? resolveLanguage(data.defaultLanguage ?? DEFAULT_LANGUAGE)
+        : systemLanguage;
+
       startTransition(() => {
-        setBootstrap(data);
+        setBootstrap({
+          ...data,
+          providerError: bootstrapProviderError,
+        });
         setThreads(
           Array.isArray(data.sessionSummaries)
             ? data.sessionSummaries.map(normalizeThreadSummary)
             : []
         );
         setProviderConfigs(normalizeProviderConfigs(data.providerConfigs));
-        setLanguage(data.defaultLanguage ?? DEFAULT_LANGUAGE);
+        setLanguage(nextLanguage);
         setShowRuntimeSettings(Boolean(data.defaultShowRuntimeSettings));
         setForm(initialForm);
         setSession(data.activeSession ?? null);
@@ -3359,8 +3152,8 @@ function App() {
         setSelectedEventId(data.activeSession?.toolEvents?.at(-1)?.id ?? null);
       });
 
-      if (data.providerError) {
-        pushNotification(data.providerError);
+      if (bootstrapProviderError) {
+        pushNotification(bootstrapProviderError);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -3626,7 +3419,14 @@ function App() {
         providerConfig: getProviderConfig(providerConfigs, targetProviderId),
       });
       const models = response?.models ?? [];
-      const errorMessage = response?.errorMessage ? String(response.errorMessage) : '';
+      const errorMessage = response?.errorMessage
+        ? resolveUiErrorText(
+            t,
+            response.errorCode,
+            response.errorVariables,
+            String(response.errorMessage)
+          )
+        : '';
 
       startTransition(() => {
         setBootstrap((previous) =>
@@ -3674,6 +3474,49 @@ function App() {
     } finally {
       setBusy(false);
       setLoadingModels(false);
+    }
+  }
+
+  async function handleExportProgressReport() {
+    const targetSessionId = session?.id ?? activeThreadId ?? null;
+    if (!targetSessionId || typeof api.exportProgressReport !== 'function') {
+      pushNotification(t('errors.progress.noSession'));
+      setActiveTopMenu(null);
+      return;
+    }
+
+    setExportingProgressReport(true);
+    setActiveTopMenu(null);
+    setError('');
+
+    try {
+      const response = await api.exportProgressReport({ sessionId: targetSessionId });
+
+      if (response?.status === 'saved' && response.filePath) {
+        pushNotification(
+          t('status.progressReportSaved', {
+            path: response.filePath,
+          }),
+          'success'
+        );
+        return;
+      }
+
+      if (response?.status === 'preview' && response?.content) {
+        downloadTextFile(response.fileName, response.content);
+        pushNotification(
+          t('status.progressReportDownloaded', {
+            fileName: response.fileName || 'forgepilot-progress-report.md',
+          }),
+          'success'
+        );
+      }
+    } catch (exportError) {
+      const message = exportError instanceof Error ? exportError.message : String(exportError);
+      setError(message);
+      pushNotification(message);
+    } finally {
+      setExportingProgressReport(false);
     }
   }
 
@@ -3771,6 +3614,9 @@ function App() {
         return;
       case 'fill-risk-prompt':
         fillPrompt(quickPrompts[2]);
+        return;
+      case 'export-progress-report':
+        await handleExportProgressReport();
         return;
       case 'window-close':
         await handleWindowAction('close');
@@ -3952,6 +3798,19 @@ function App() {
     ].join('\n\n');
   }
 
+  function insertAttachmentReference(attachment) {
+    if (!attachment?.path) {
+      return;
+    }
+
+    const reference = t('attachments.referencePrompt', {
+      name: attachment.originalName || attachment.name,
+      path: attachment.path,
+    });
+    setInput((previous) => (previous.trim() ? `${previous.trim()}\n\n${reference}` : reference));
+    globalThis.requestAnimationFrame?.(() => composerRef.current?.focus());
+  }
+
   return html`
     <div className="app-frame">
       <${SettingsModal}
@@ -3984,6 +3843,8 @@ function App() {
         modelStatusMessage=${modelStatusMessage}
         session=${session}
         autoSyncingSettings=${autoSyncingSettings}
+        onExportProgressReport=${handleExportProgressReport}
+        exportingProgressReport=${exportingProgressReport}
         mcpServers=${configuredMcpServers}
         mcpDraft=${mcpDraft}
         onUpdateMcpDraft=${updateMcpDraft}
@@ -4090,7 +3951,7 @@ function App() {
             <button
               type="button"
               className=${`topbar-icon-button ${activeTopMenu === 'app' ? 'active' : ''}`}
-              aria-label="App menu"
+              aria-label=${t('window.appMenu')}
               aria-expanded=${activeTopMenu === 'app'}
               onClick=${() => toggleTopMenu('app')}
             >
@@ -4121,7 +3982,7 @@ function App() {
           <button
             type="button"
             className="topbar-icon-button"
-            aria-label="Back"
+            aria-label=${t('window.back')}
             disabled=${!canGoBack}
             onClick=${() => navigateEvents(-1)}
           >
@@ -4130,7 +3991,7 @@ function App() {
           <button
             type="button"
             className="topbar-icon-button"
-            aria-label="Forward"
+            aria-label=${t('window.forward')}
             disabled=${!canGoForward}
             onClick=${() => navigateEvents(1)}
           >
@@ -4173,7 +4034,7 @@ function App() {
         </div>
 
         <div className="topbar-center">
-          <span className="topbar-center-label">${previewMode ? 'Preview' : t('settings.about.workspace')}</span>
+          <span className="topbar-center-label">${previewMode ? t('settings.previewMode') : t('settings.about.workspace')}</span>
           <strong>${baseName(session?.workspaceRoot ?? form.workspaceRoot)}</strong>
         </div>
 
@@ -4181,7 +4042,7 @@ function App() {
           <button
             type="button"
             className="window-control-button"
-            aria-label="Minimize"
+            aria-label=${t('window.minimize')}
             onClick=${() => void handleWindowAction('minimize')}
           >
             ─
@@ -4189,7 +4050,7 @@ function App() {
           <button
             type="button"
             className="window-control-button"
-            aria-label=${windowState.isMaximized ? 'Restore' : 'Maximize'}
+            aria-label=${windowState.isMaximized ? t('window.restore') : t('window.maximize')}
             onClick=${() => void handleWindowAction('toggleMaximize')}
           >
             ${windowState.isMaximized ? '❐' : '□'}
@@ -4197,7 +4058,7 @@ function App() {
           <button
             type="button"
             className="window-control-button close"
-            aria-label="Close"
+            aria-label=${t('window.close')}
             onClick=${() => void handleWindowAction('close')}
           >
             ×
@@ -4337,6 +4198,32 @@ function App() {
           </div>
         </header>
 
+        ${attachmentShelfItems.length > 0
+          ? html`
+              <section className="thread-attachment-shelf">
+                <div className="thread-attachment-shelf-header">
+                  <strong>${t('attachments.shelfTitle')}</strong>
+                  <span>${t('attachments.shelfCopy')}</span>
+                </div>
+                <div className="thread-attachment-shelf-list">
+                  ${attachmentShelfItems.map(
+                    (attachment) => html`
+                      <button
+                        key=${attachment.id}
+                        type="button"
+                        className="thread-attachment-pill"
+                        onClick=${() => insertAttachmentReference(attachment)}
+                      >
+                        <strong>${attachment.originalName || attachment.name}</strong>
+                        <small>${attachment.path}</small>
+                      </button>
+                    `
+                  )}
+                </div>
+              </section>
+            `
+          : null}
+
         <section className="thread-body" ref=${messagesRef}>
           ${error ? html`<div className="status-banner error">${error}</div>` : null}
 
@@ -4346,11 +4233,51 @@ function App() {
                   <article key=${message.id} className=${`chat-message ${message.role}`}>
                     <div className="chat-meta">
                       <span>${message.role === 'user' ? t('chat.you') : t('chat.agent')}</span>
-                      <span>${formatTimestamp(message.createdAt)}</span>
+                      <span>${formatTimestamp(message.createdAt, language)}</span>
                     </div>
                     <div className="chat-content">${message.content}</div>
                     ${message.thinking
                       ? html`<div className="chat-thinking">${message.thinking}</div>`
+                      : null}
+                    ${message.role === 'assistant' && messageSourceCards.has(message.id)
+                      ? (() => {
+                          const sourceCard = messageSourceCards.get(message.id);
+                          return html`
+                            <div className="source-card">
+                              <div className="source-card-header">
+                                <strong>${t('sources.usedSources')}</strong>
+                                <span>${t('sources.count', { count: sourceCard.totalSources })}</span>
+                              </div>
+                              <div className="source-card-list">
+                                ${sourceCard.sources.map(
+                                  (source) => html`
+                                    <button
+                                      key=${source.id}
+                                      type="button"
+                                      className="source-card-row"
+                                      onClick=${() => source.eventId && selectEvent(source.eventId)}
+                                    >
+                                      <div className="source-card-row-copy">
+                                        <strong>${source.title}</strong>
+                                        <span>${source.url}</span>
+                                        ${source.snippet
+                                          ? html`<small>${source.snippet}</small>`
+                                          : null}
+                                      </div>
+                                      <span className="source-card-kind">
+                                        ${source.kind === 'browser'
+                                          ? t('sources.browserFetch')
+                                          : source.kind === 'fetch'
+                                            ? t('sources.webFetch')
+                                            : t('sources.webSearch')}
+                                      </span>
+                                    </button>
+                                  `
+                                )}
+                              </div>
+                            </div>
+                          `;
+                        })()
                       : null}
                     ${message.role === 'assistant' && messageChangeCards.has(message.id)
                       ? (() => {
@@ -4453,6 +4380,12 @@ function App() {
                           `
                         )
                       : html`<div className="live-activity-empty">${t('status.working')}</div>`}
+                    ${liveStreamThinking
+                      ? html`<div className="live-stream-preview subtle">${liveStreamThinking}</div>`
+                      : null}
+                    ${liveStreamText
+                      ? html`<div className="live-stream-preview">${liveStreamText}</div>`
+                      : null}
                   </div>
                 </div>
               `
@@ -4604,6 +4537,27 @@ function App() {
             </div>
           </div>
         </form>
+
+        <div className="diagnostics-footer">
+          <span className=${`diagnostic-pill ${diagnosticsProviderState}`}>
+            ${t('diagnostics.provider')}: ${providerLabel} · ${
+              diagnosticsProviderState === 'online' ? t('diagnostics.online') : t('diagnostics.attention')
+            }
+          </span>
+          <span className="diagnostic-pill">
+            ${t('diagnostics.activeTools')}: ${liveToolRows.length}
+          </span>
+          <span className="diagnostic-pill">
+            ${t('diagnostics.phase')}: ${formatPhaseLabel(t, livePhase) || t('diagnostics.idle')}
+          </span>
+          ${lastRecoverableError
+            ? html`
+                <span className="diagnostic-pill warning" title=${lastRecoverableError}>
+                  ${t('diagnostics.lastError')}: ${summarizeSourceSnippet(lastRecoverableError, 80)}
+                </span>
+              `
+            : null}
+        </div>
       </main>
         `}
 

@@ -257,6 +257,44 @@ test('session service imports attachments into the workspace and persists them a
   assert.equal(restored.session.attachments[0].originalName, 'report.pdf');
 });
 
+test('session service can build a progress debug report for the active thread', async () => {
+  const appRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cokgizlicoder-app-'));
+  const workspaceRoot = path.join(appRoot, 'workspace');
+  const statePath = path.join(appRoot, 'state', 'desktop-state.json');
+  await fs.mkdir(workspaceRoot, { recursive: true });
+
+  const provider = createFakeProvider();
+  const service = new SessionService({ appRoot, provider, statePath });
+  const created = await service.createSession({
+    workspaceRoot,
+    model: 'fake-model',
+    permissionPreset: PermissionPreset.FULL_ACCESS,
+    modelSettings: DEFAULT_MODEL_SETTINGS,
+  });
+
+  await service.sendUserMessage(created.session.id, 'debug this web flow');
+  const rawSession = service.sessions.get(created.session.id);
+  rawSession.toolEvents.push({
+    id: 'tool-event-1',
+    toolName: 'web_fetch',
+    source: 'builtin',
+    status: 'failed',
+    arguments: { url: 'https://example.com/missing' },
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    resultPreview: 'Web request failed with status 404.',
+    result: { error: 'Web request failed with status 404.' },
+  });
+
+  const report = await service.exportProgressReport(created.session.id);
+
+  assert.match(report.fileName, /forgepilot-progress-/i);
+  assert.match(report.content, /# ForgePilot Progress Debug Report/);
+  assert.match(report.content, /debug this web flow/);
+  assert.match(report.content, /web_fetch \[failed\]/i);
+  assert.match(report.content, /https:\/\/example\.com\/missing/);
+});
+
 test('session service can cancel an active run', async () => {
   const appRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cokgizlicoder-app-'));
   const workspaceRoot = path.join(appRoot, 'workspace');

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs/promises';
 
 import { Menu, app, BrowserWindow, dialog, ipcMain, screen } from 'electron';
 
@@ -301,6 +302,32 @@ function registerIpc() {
   ipcMain.handle('app:refresh-models', async (_event, payload) =>
     sessionService.listModelsSafe(payload?.providerId, payload?.providerConfig ?? null)
   );
+  ipcMain.handle('app:export-progress-report', async (event, payload) => {
+    const report = await sessionService.exportProgressReport(payload?.sessionId ?? null);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const saveResult = await dialog.showSaveDialog(window ?? undefined, {
+      title: 'Export progress debug report',
+      defaultPath: path.join(app.getPath('desktop'), report.fileName),
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'Text', extensions: ['txt'] },
+      ],
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return {
+        status: 'cancelled',
+        fileName: report.fileName,
+      };
+    }
+
+    await fs.writeFile(saveResult.filePath, report.content, 'utf8');
+    return {
+      status: 'saved',
+      fileName: path.basename(saveResult.filePath),
+      filePath: saveResult.filePath,
+    };
+  });
   ipcMain.handle('app:save-state', async (_event, payload) => sessionService.saveAppState(payload));
   ipcMain.handle('session:create', async (_event, payload) => sessionService.createSession(payload));
   ipcMain.handle('session:get', async (_event, sessionId) => sessionService.getSession(sessionId));

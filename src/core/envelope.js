@@ -63,6 +63,59 @@ function extractLeadingJsonValue(rawPayload) {
   return payload;
 }
 
+function escapeControlCharactersInJsonStrings(rawPayload) {
+  const payload = String(rawPayload ?? '');
+  let sanitized = '';
+  let inString = false;
+  let escaped = false;
+  let changed = false;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    const character = payload[index];
+    const code = character.charCodeAt(0);
+
+    if (inString) {
+      if (escaped) {
+        sanitized += character;
+        escaped = false;
+        continue;
+      }
+
+      if (character === '\\') {
+        sanitized += character;
+        escaped = true;
+        continue;
+      }
+
+      if (character === '"') {
+        sanitized += character;
+        inString = false;
+        continue;
+      }
+
+      if (code <= 0x1f) {
+        sanitized += `\\u${code.toString(16).padStart(4, '0')}`;
+        changed = true;
+        continue;
+      }
+
+      sanitized += character;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+    }
+
+    sanitized += character;
+  }
+
+  return {
+    payload: sanitized,
+    changed,
+  };
+}
+
 function parseEnvelopePayload(payload) {
   try {
     return {
@@ -73,13 +126,26 @@ function parseEnvelopePayload(payload) {
     const trimmedPayload = String(payload ?? '').trim();
     const salvagedPayload = extractLeadingJsonValue(trimmedPayload);
 
-    if (salvagedPayload === trimmedPayload) {
+    if (salvagedPayload !== trimmedPayload) {
+      try {
+        return {
+          parsed: JSON.parse(salvagedPayload),
+          payload: salvagedPayload,
+        };
+      } catch {
+        // fall through to control-character recovery
+      }
+    }
+
+    const sanitized = escapeControlCharactersInJsonStrings(salvagedPayload);
+
+    if (!sanitized.changed) {
       throw error;
     }
 
     return {
-      parsed: JSON.parse(salvagedPayload),
-      payload: salvagedPayload,
+      parsed: JSON.parse(sanitized.payload),
+      payload: sanitized.payload,
     };
   }
 }

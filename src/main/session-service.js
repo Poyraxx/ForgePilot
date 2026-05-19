@@ -17,13 +17,17 @@ import { relativizeWorkspacePath, resolveWorkspacePath } from '../core/path-guar
 import { ToolRegistry } from '../core/tool-registry.js';
 import { createBuiltInTools } from '../core/tools/index.js';
 import { resolveDefaultStatePath } from '../core/platform.js';
+import {
+  DEFAULT_LANGUAGE,
+  SUPPORTED_LANGUAGE_IDS,
+  resolveLanguage,
+} from '../core/localization.js';
 
 const DEFAULT_MODEL_SETTINGS = Object.freeze({
   contextLength: 32768,
   temperature: 0.2,
   systemPrompt: '',
 });
-const DEFAULT_LANGUAGE = 'en';
 const STATE_FILE_VERSION = 2;
 const ACTIVE_TOOL_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const ATTACHMENT_DIRECTORY = path.join('.cokgizlicoder', 'attachments');
@@ -89,7 +93,15 @@ function normalizeModelSettings(modelSettings = {}) {
 }
 
 function normalizeLanguage(value) {
-  return value === 'tr' ? 'tr' : DEFAULT_LANGUAGE;
+  return resolveLanguage(value, DEFAULT_LANGUAGE);
+}
+
+function createUiError(code, message, variables = {}) {
+  return {
+    code,
+    message,
+    variables,
+  };
 }
 
 function normalizeMcpEnv(value) {
@@ -141,6 +153,9 @@ function normalizeMcpServers(value) {
 function normalizePreferences(preferences = {}, fallbackRoot = process.cwd()) {
   return {
     language: normalizeLanguage(preferences.language),
+    languageExplicit:
+      preferences?.languageExplicit === true ||
+      Object.prototype.hasOwnProperty.call(preferences ?? {}, 'language'),
     workspaceRoot: normalizeWorkspaceRoot(preferences.workspaceRoot, fallbackRoot),
     providerId: normalizeProviderId(preferences.providerId, ProviderName.OLLAMA),
     providerConfigs: normalizeProviderConfigs(preferences.providerConfigs),
@@ -154,11 +169,17 @@ function normalizePreferences(preferences = {}, fallbackRoot = process.cwd()) {
 
 function buildProviderConfigError(providerId, providerConfig = {}) {
   if (providerId === ProviderName.OPENAI && !String(providerConfig.apiKey ?? '').trim()) {
-    return 'OpenAI API key is not configured yet. Add it in Settings > General > Provider.';
+    return createUiError(
+      'errors.provider.openaiApiKeyMissing',
+      'OpenAI API key is not configured yet. Add it in Settings > General > Provider.'
+    );
   }
 
   if (providerId === ProviderName.ANTHROPIC && !String(providerConfig.apiKey ?? '').trim()) {
-    return 'Anthropic API key is not configured yet. Add it in Settings > General > Provider.';
+    return createUiError(
+      'errors.provider.anthropicApiKeyMissing',
+      'Anthropic API key is not configured yet. Add it in Settings > General > Provider.'
+    );
   }
 
   return null;
@@ -173,24 +194,37 @@ function normalizeListModelsError(providerId, error) {
       message
     )
   ) {
-    return 'OpenAI API key is missing or invalid. Check Settings > General > Provider.';
+    return createUiError(
+      'errors.provider.openaiApiKeyInvalid',
+      'OpenAI API key is missing or invalid. Check Settings > General > Provider.'
+    );
   }
 
   if (
     providerId === ProviderName.OPENAI_COMPATIBLE &&
     /Missing bearer authentication|authentication/i.test(message)
   ) {
-    return 'This OpenAI-compatible endpoint requires an API key. Add it in Settings > General > Provider.';
+    return createUiError(
+      'errors.provider.compatibleApiKeyMissing',
+      'This OpenAI-compatible endpoint requires an API key. Add it in Settings > General > Provider.'
+    );
   }
 
   if (
     providerId === ProviderName.ANTHROPIC &&
     /x-api-key header is required|authentication_error|api[_ -]?key/i.test(message)
   ) {
-    return 'Anthropic API key is missing or invalid. Check Settings > General > Provider.';
+    return createUiError(
+      'errors.provider.anthropicApiKeyInvalid',
+      'Anthropic API key is missing or invalid. Check Settings > General > Provider.'
+    );
   }
 
-  return message || 'Model list could not be loaded for this provider.';
+  return createUiError(
+    'errors.provider.modelListFailed',
+    message || 'Model list could not be loaded for this provider.',
+    { providerId }
+  );
 }
 
 function areModelSettingsEqual(left = {}, right = {}) {
@@ -372,10 +406,62 @@ function appendAssistantMessage(session, content) {
   });
 }
 
+function stringifyForDebug(value, maxLength = 12_000) {
+  const raw =
+    typeof value === 'string'
+      ? value
+      : JSON.stringify(value ?? null, null, 2);
+
+  if (raw.length <= maxLength) {
+    return raw;
+  }
+
+  return `${raw.slice(0, maxLength)}\n… [truncated ${raw.length - maxLength} chars]`;
+}
+
+function formatDebugMessageBlock(message) {
+  const headerParts = [
+    `[${message.role}]`,
+    message.toolName ? `tool:${message.toolName}` : '',
+    message.createdAt ?? '',
+  ].filter(Boolean);
+
+  const content = stringifyForDebug(message.rawContent ?? message.content ?? '', 8_000);
+  return [`### ${headerParts.join(' ')}`, '```text', content, '```'].join('\n');
+}
+
+function formatDebugToolEventBlock(event, index) {
+  const lines = [
+    `### ${index + 1}. ${event.toolName} [${event.status}]`,
+    `- Event ID: ${event.id}`,
+    `- Source: ${event.source ?? 'unknown'}`,
+    `- Created: ${event.createdAt ?? '-'}`,
+    `- Started: ${event.startedAt ?? '-'}`,
+    `- Completed: ${event.completedAt ?? '-'}`,
+  ];
+
+  if (event.resultPreview) {
+    lines.push(`- Preview: ${event.resultPreview}`);
+  }
+
+  lines.push('', '#### Arguments', '```json', stringifyForDebug(event.arguments ?? {}, 8_000), '```');
+  lines.push('', '#### Result', '```json', stringifyForDebug(event.result ?? null, 16_000), '```');
+
+  return lines.join('\n');
+}
+
+function buildProgressReportFileName(sessionId) {
+  const stamp = nowIso().replace(/[:.]/g, '-');
+  return `forgepilot-progress-${sessionId}-${stamp}.md`;
+}
+
 function createDefaultPersistedState(appRoot) {
   return {
     version: STATE_FILE_VERSION,
-    preferences: normalizePreferences({}, appRoot),
+    preferences: {
+      ...normalizePreferences({}, appRoot),
+      languageExplicit: false,
+    },
     lastSessionId: null,
   };
 }
@@ -425,6 +511,8 @@ export class SessionService {
     return {
       appName: 'ForgePilot',
       defaultLanguage: this.appState.preferences.language,
+      languageWasExplicit: Boolean(this.appState.preferences.languageExplicit),
+      supportedLanguages: SUPPORTED_LANGUAGE_IDS,
       defaultWorkspace: this.appState.preferences.workspaceRoot,
       defaultProviderId: selectedProviderId,
       providerConfigs: this.appState.preferences.providerConfigs,
@@ -438,6 +526,8 @@ export class SessionService {
       loadedModelsProviderId: selectedProviderId,
       models,
       providerError,
+      providerErrorCode: modelRefresh.ok ? null : modelRefresh.errorCode ?? null,
+      providerErrorVariables: modelRefresh.ok ? null : modelRefresh.errorVariables ?? null,
       sessionSummaries: this.#listSessionSummaries(),
       activeSession: activeSession ? this.serializeSession(activeSession) : null,
     };
@@ -481,7 +571,9 @@ export class SessionService {
         ok: false,
         providerId: normalizedProviderId,
         models: [],
-        errorMessage: providerConfigError,
+        errorMessage: providerConfigError.message,
+        errorCode: providerConfigError.code,
+        errorVariables: providerConfigError.variables,
       };
     }
 
@@ -494,11 +586,14 @@ export class SessionService {
         errorMessage: null,
       };
     } catch (error) {
+      const normalizedError = normalizeListModelsError(normalizedProviderId, error);
       return {
         ok: false,
         providerId: normalizedProviderId,
         models: [],
-        errorMessage: normalizeListModelsError(normalizedProviderId, error),
+        errorMessage: normalizedError.message,
+        errorCode: normalizedError.code,
+        errorVariables: normalizedError.variables,
       };
     }
   }
@@ -571,6 +666,74 @@ export class SessionService {
     await this.ready;
     const session = this.#requireSession(sessionId);
     return { session: this.serializeSession(session) };
+  }
+
+  async exportProgressReport(sessionId) {
+    await this.ready;
+    const effectiveSessionId = sessionId || this.appState.lastSessionId;
+    if (!effectiveSessionId) {
+      throw new Error('Open a chat first to export its progress report.');
+    }
+
+    const session = this.#requireSession(effectiveSessionId);
+    const recentMessages = session.messages.slice(-16);
+    const recentToolEvents = session.toolEvents.slice(-40);
+    const lines = [
+      '# ForgePilot Progress Debug Report',
+      '',
+      `Generated at: ${nowIso()}`,
+      '',
+      '## Session',
+      `- Session ID: ${session.id}`,
+      `- Workspace: ${session.workspaceRoot}`,
+      `- Provider: ${session.providerId}`,
+      `- Model: ${session.model}`,
+      `- Permission: ${session.permissionPreset}`,
+      `- Context length: ${session.modelSettings?.contextLength ?? DEFAULT_MODEL_SETTINGS.contextLength}`,
+      `- Temperature: ${session.modelSettings?.temperature ?? DEFAULT_MODEL_SETTINGS.temperature}`,
+      `- Active run: ${this.activeRuns.has(session.id) ? 'yes' : 'no'}`,
+      `- Pending approval: ${session.pendingApproval ? 'yes' : 'no'}`,
+      `- Attachment count: ${Array.isArray(session.attachments) ? session.attachments.length : 0}`,
+      `- Tool event count: ${session.toolEvents.length}`,
+      '',
+      '## Attachments',
+    ];
+
+    if (Array.isArray(session.attachments) && session.attachments.length > 0) {
+      for (const attachment of session.attachments) {
+        lines.push(
+          `- ${attachment.originalName || attachment.name} -> ${attachment.path} (${attachment.mimeType || 'unknown'}, ${attachment.size || 0} bytes)`
+        );
+      }
+    } else {
+      lines.push('- None');
+    }
+
+    lines.push('', '## Recent messages');
+    if (recentMessages.length > 0) {
+      for (const message of recentMessages) {
+        lines.push(formatDebugMessageBlock(serializeMessage(message)));
+        lines.push('');
+      }
+    } else {
+      lines.push('No messages yet.', '');
+    }
+
+    lines.push('## Recent tool events');
+    if (recentToolEvents.length > 0) {
+      recentToolEvents.forEach((event, index) => {
+        lines.push(formatDebugToolEventBlock(event, index));
+        lines.push('');
+      });
+    } else {
+      lines.push('No tool events yet.', '');
+    }
+
+    return {
+      sessionId: session.id,
+      fileName: buildProgressReportFileName(session.id),
+      content: lines.join('\n').trim() + '\n',
+    };
   }
 
   async importAttachments(sessionId, attachments = []) {

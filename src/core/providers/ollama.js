@@ -1,6 +1,10 @@
-import { AgentEnvelopeMode, ProviderName, safeJsonParse } from '../contracts.js';
-import { buildEnvelopeRepairMessage, parseAgentEnvelope } from '../envelope.js';
+import { ProviderName, safeJsonParse } from '../contracts.js';
 import { isAbortError, throwIfAborted } from '../abort.js';
+import {
+  buildEmulationPromptBundle,
+  buildEnvelopeRepairPrompt,
+  parseEmulatedEnvelopeWithRepair,
+} from './emulation.js';
 
 function normalizeOllamaError(error, baseUrl, action = 'request') {
   if (isAbortError(error)) {
@@ -85,30 +89,6 @@ function buildOllamaOptions(runtimeOptions = {}) {
   return options;
 }
 
-function toPlainTextFinalEnvelope(rawMessage = '') {
-  const message = String(rawMessage ?? '').trim();
-
-  if (!message) {
-    return null;
-  }
-
-  if (/<agent-response[\s>]/i.test(message)) {
-    return null;
-  }
-
-  if (
-    (message.startsWith('{') && message.endsWith('}')) ||
-    (message.startsWith('[') && message.endsWith(']'))
-  ) {
-    return null;
-  }
-
-  return {
-    mode: AgentEnvelopeMode.FINAL,
-    message,
-  };
-}
-
 function toOllamaMessage(message) {
   if (message.role === 'tool') {
     return {
@@ -181,6 +161,11 @@ function buildEmulationSystemPrompt(tools, workspaceRoot, knownPaths = []) {
     'Use fs_patch only when you already know the exact existing text from fs_read.',
     'If you want to replace an entire file, prefer fs_write instead of fs_patch.',
     'If you need current public web information, use web_search first and then web_fetch one of the returned URLs.',
+    'After web_search, prefer resultId-based fetching: pass the exact resultId from web_search into web_fetch or browser_fetch whenever available.',
+    'Only web_fetch or browser_fetch an exact URL that appeared in web_search results or that the user explicitly pasted.',
+    'Never invent, rewrite, shorten, or guess a web URL from memory, snippets, titles, or domain knowledge.',
+    'If a web URL is blocked as undiscovered, do not try a different guessed URL. Run web_search again with a better query and copy one exact returned URL.',
+    'If normal web_fetch is blocked, incomplete, or the page needs JavaScript, use browser_fetch for a browser-rendered read.',
     'Do not repeat the same exploratory tool call if the previous result already gave enough context.',
     'If a tool reports that a path was not found, choose a different path from prior tool output instead of guessing.',
     normalizedKnownPaths.length > 0
@@ -207,25 +192,7 @@ function withSystemPrompt(messages, systemPrompt = '') {
   ];
 }
 
-function buildEmulationMessages(messages, tools, workspaceRoot, systemPrompt = '', knownPaths = []) {
-  const sections = [];
-  const normalizedPrompt = String(systemPrompt ?? '').trim();
-
-  if (normalizedPrompt) {
-    sections.push(`Additional agent behavior instructions:\n${normalizedPrompt}`);
-  }
-
-  sections.push(buildEmulationSystemPrompt(tools, workspaceRoot, knownPaths));
-
-  const protocolMessage = {
-    role: 'system',
-    content: sections.join('\n\n'),
-  };
-
-  return [protocolMessage, ...messages.map(toOllamaMessage)];
-}
-
-async function readStreamingResponse(response) {
+async function readStreamingResponse(response, { onChunk } = {}) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const chunks = [];
@@ -263,6 +230,13 @@ async function readStreamingResponse(response) {
         toolCalls = fromOllamaToolCalls(parsed.message.tool_calls);
       }
       lastEnvelope = parsed;
+      onChunk?.({
+        delta: parsed.message?.content ?? '',
+        content,
+        thinking,
+        toolCalls,
+        raw: parsed,
+      });
     }
   }
 
@@ -369,13 +343,20 @@ export class OllamaProvider {
       };
     }
 
-    const emulationMessages = buildEmulationMessages(
+    const emulation = buildEmulationPromptBundle(
       messages,
       tools,
       workspaceRoot,
       systemPrompt,
       knownPaths
     );
+    const emulationMessages = [
+      {
+        role: 'system',
+        content: emulation.systemPrompt,
+      },
+      ...emulation.messages.map(toOllamaMessage),
+    ];
     const response = await this.#postJson('/api/chat', {
       model,
       stream: false,
@@ -384,68 +365,40 @@ export class OllamaProvider {
     }, { signal });
 
     const rawMessage = response.message?.content ?? '';
-    let parsedEnvelope = parseAgentEnvelope(rawMessage);
-
-    if (!parsedEnvelope.ok) {
-      const repairResponse = await this.#postJson('/api/chat', {
-        model,
-        stream: false,
-        messages: [
-          ...emulationMessages,
-          { role: 'assistant', content: rawMessage },
-          { role: 'user', content: buildEnvelopeRepairMessage(parsedEnvelope) },
-        ],
-        options,
-      }, { signal });
-
-      parsedEnvelope = parseAgentEnvelope(repairResponse.message?.content ?? '');
-
-      if (!parsedEnvelope.ok) {
-        const plainTextFallback =
-          toPlainTextFinalEnvelope(repairResponse.message?.content ?? '') ??
-          toPlainTextFinalEnvelope(rawMessage);
-
-        if (plainTextFallback) {
-          return {
-            provider: this.name,
-            nativeTools: false,
-            message: plainTextFallback.message,
-            thinking: repairResponse.message?.thinking ?? response.message?.thinking ?? '',
-            envelope: plainTextFallback,
-            raw: repairResponse,
-          };
-        }
+    const parsed = await parseEmulatedEnvelopeWithRepair({
+      rawMessage,
+      fallbackThinking: response.message?.thinking ?? '',
+      repair: async (parseFailure) => {
+        const repairResponse = await this.#postJson(
+          '/api/chat',
+          {
+            model,
+            stream: false,
+            messages: [
+              ...emulationMessages,
+              { role: 'assistant', content: rawMessage },
+              { role: 'user', content: buildEnvelopeRepairPrompt(parseFailure) },
+            ],
+            options,
+          },
+          { signal }
+        );
 
         return {
-          provider: this.name,
-          nativeTools: false,
-          message: rawMessage,
-          thinking: response.message?.thinking ?? '',
-          envelope: {
-            mode: AgentEnvelopeMode.ERROR,
-            message: `Protocol parse failure: ${parsedEnvelope.error}`,
-          },
+          message: repairResponse.message?.content ?? '',
+          thinking: repairResponse.message?.thinking ?? '',
           raw: repairResponse,
         };
-      }
-
-      return {
-        provider: this.name,
-        nativeTools: false,
-        message: repairResponse.message?.content ?? '',
-        thinking: repairResponse.message?.thinking ?? '',
-        envelope: parsedEnvelope.envelope,
-        raw: repairResponse,
-      };
-    }
+      },
+    });
 
     return {
       provider: this.name,
       nativeTools: false,
-      message: rawMessage,
-      thinking: response.message?.thinking ?? '',
-      envelope: parsedEnvelope.envelope,
-      raw: response,
+      message: parsed.message,
+      thinking: parsed.thinking,
+      envelope: parsed.envelope,
+      raw: parsed.raw ?? response,
     };
   }
 
@@ -459,9 +412,13 @@ export class OllamaProvider {
     systemPrompt = '',
     runtimeOptions = {},
     signal,
+    onChunk,
   }) {
     throwIfAborted(signal);
     const options = buildOllamaOptions(runtimeOptions);
+    const emulation = useNativeTools
+      ? null
+      : buildEmulationPromptBundle(messages, tools, workspaceRoot, systemPrompt, knownPaths);
     const body = useNativeTools
       ? {
           model,
@@ -473,13 +430,13 @@ export class OllamaProvider {
       : {
           model,
           stream: true,
-          messages: buildEmulationMessages(
-            messages,
-            tools,
-            workspaceRoot,
-            systemPrompt,
-            knownPaths
-          ),
+          messages: [
+            {
+              role: 'system',
+              content: emulation.systemPrompt,
+            },
+            ...emulation.messages.map(toOllamaMessage),
+          ],
           options,
         };
 
@@ -500,7 +457,7 @@ export class OllamaProvider {
       throw new Error(`Ollama streaming chat failed with status ${response.status}.`);
     }
 
-    const streamed = await readStreamingResponse(response);
+    const streamed = await readStreamingResponse(response, { onChunk });
 
     if (useNativeTools) {
       return {
@@ -514,22 +471,44 @@ export class OllamaProvider {
       };
     }
 
-    const envelope = parseAgentEnvelope(streamed.content);
-    const plainTextFallback = envelope.ok ? null : toPlainTextFinalEnvelope(streamed.content);
+    const parsed = await parseEmulatedEnvelopeWithRepair({
+      rawMessage: streamed.content,
+      fallbackThinking: streamed.thinking,
+      repair: async (parseFailure) => {
+        const repairResponse = await this.#postJson(
+          '/api/chat',
+          {
+            model,
+            stream: false,
+            messages: [
+              {
+                role: 'system',
+                content: emulation.systemPrompt,
+              },
+              ...emulation.messages.map(toOllamaMessage),
+              { role: 'assistant', content: streamed.content },
+              { role: 'user', content: buildEnvelopeRepairPrompt(parseFailure) },
+            ],
+            options,
+          },
+          { signal }
+        );
+
+        return {
+          message: repairResponse.message?.content ?? '',
+          thinking: repairResponse.message?.thinking ?? streamed.thinking ?? '',
+          raw: repairResponse,
+        };
+      },
+    });
 
     return {
       provider: this.name,
       nativeTools: false,
-      message: streamed.content,
-      thinking: streamed.thinking,
-      envelope:
-        envelope.ok
-          ? envelope.envelope
-          : plainTextFallback ?? {
-              mode: AgentEnvelopeMode.ERROR,
-              message: envelope.error,
-            },
-      raw: streamed.lastEnvelope,
+      message: parsed.message,
+      thinking: parsed.thinking,
+      envelope: parsed.envelope,
+      raw: parsed.raw ?? streamed.lastEnvelope,
       chunks: streamed.chunks,
     };
   }

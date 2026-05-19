@@ -31,6 +31,16 @@ test('parseAgentEnvelope ignores trailing junk after a valid JSON payload', () =
   assert.equal(parsed.envelope.message, 'done');
 });
 
+test('parseAgentEnvelope recovers from raw control characters inside JSON strings', () => {
+  const parsed = parseAgentEnvelope(
+    '<agent-response>{"mode":"final","message":"line 1\nline 2\twith tab"}</agent-response>'
+  );
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.envelope.mode, 'final');
+  assert.equal(parsed.envelope.message, 'line 1\nline 2\twith tab');
+});
+
 test('parseAgentEnvelope reports invalid responses', () => {
   const parsed = parseAgentEnvelope('hello world');
 
