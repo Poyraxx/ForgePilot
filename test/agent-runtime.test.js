@@ -6,11 +6,15 @@ import path from 'node:path';
 
 import { AgentRuntime } from '../src/core/agent/runtime.js';
 import { createAbortError } from '../src/core/abort.js';
-import { PermissionPreset } from '../src/core/contracts.js';
+import { AgentMode, PermissionPreset } from '../src/core/contracts.js';
 import { ToolRegistry } from '../src/core/tool-registry.js';
 import { createBuiltInTools } from '../src/core/tools/index.js';
 
-async function createSession(provider, permissionPreset = PermissionPreset.FULL_ACCESS) {
+async function createSession(
+  provider,
+  permissionPreset = PermissionPreset.FULL_ACCESS,
+  agentMode = AgentMode.BUILD
+) {
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cokgizlicoder-runtime-'));
   const toolRegistry = new ToolRegistry(createBuiltInTools());
 
@@ -18,6 +22,7 @@ async function createSession(provider, permissionPreset = PermissionPreset.FULL_
     id: 'session-1',
     workspaceRoot,
     model: 'fake-model',
+    agentMode,
     permissionPreset,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -931,9 +936,183 @@ test('runtime does not allow finalizing web research before one exact search-res
   assert.equal(result.status, 'completed');
   assert.equal(session.toolEvents[0]?.toolName, 'web_search');
   assert.equal(guardEvent?.status, 'blocked');
-  assert.match(guardEvent?.resultPreview ?? '', /no source page has been fetched successfully yet/i);
+  assert.match(guardEvent?.resultPreview ?? '', /only 0 fetched sources succeeded so far/i);
   assert.equal(completedFetchEvent?.status, 'completed');
   assert.match(session.messages.at(-1)?.content ?? '', /Now I can summarize/);
+});
+
+test('plan mode blocks workspace-changing tool calls and keeps the agent in analysis mode', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"fs_write","arguments":{"path":"plan.md","content":"draft"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'fs_write', arguments: { path: 'plan.md', content: 'draft' } }],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"Here is the recommended implementation plan."}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'Here is the recommended implementation plan.',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(
+    provider,
+    PermissionPreset.FULL_ACCESS,
+    AgentMode.PLAN
+  );
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'plan the next implementation steps');
+
+  assert.equal(result.status, 'completed');
+  assert.equal(session.toolEvents[0]?.toolName, 'fs_write');
+  assert.equal(session.toolEvents[0]?.status, 'blocked');
+  assert.match(session.toolEvents[0]?.resultPreview ?? '', /Plan mode is analysis-first/i);
+  assert.match(session.messages.at(-1)?.content ?? '', /recommended implementation plan/i);
+});
+
+test('research mode requires two fetched sources before finalizing a web research answer', async () => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: false, structuredOutput: true, streaming: true };
+    },
+    async runTurn() {
+      this.turns += 1;
+
+      if (this.turns === 1) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_search","arguments":{"query":"agent research workflow"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_search', arguments: { query: 'agent research workflow' } }],
+          },
+        };
+      }
+
+      if (this.turns === 2) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/source-1"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_fetch', arguments: { url: 'https://www.example.com/source-1' } }],
+          },
+        };
+      }
+
+      if (this.turns === 3) {
+        return {
+          message: '<agent-response>{"mode":"final","message":"I have enough to summarize now."}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'final',
+            message: 'I have enough to summarize now.',
+          },
+        };
+      }
+
+      if (this.turns === 4) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/source-2"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'web_fetch', arguments: { url: 'https://www.example.com/source-2' } }],
+          },
+        };
+      }
+
+      return {
+        message: '<agent-response>{"mode":"final","message":"Now I can compare both sources."}</agent-response>',
+        thinking: '',
+        envelope: {
+          mode: 'final',
+          message: 'Now I can compare both sources.',
+        },
+      };
+    },
+  };
+
+  const session = await createSession(
+    provider,
+    PermissionPreset.FULL_ACCESS,
+    AgentMode.RESEARCH
+  );
+  const webSearchDefinition = session.toolRegistry.get('web_search');
+  session.toolRegistry.register({
+    ...webSearchDefinition,
+    handler: async () => ({
+      query: 'agent research workflow',
+      provider: 'duckduckgo',
+      results: [
+        {
+          title: 'Source one',
+          url: 'https://www.example.com/source-1',
+          snippet: 'First source',
+          availability: { ok: true, status: 200, url: 'https://www.example.com/source-1', reason: 'ok' },
+        },
+        {
+          title: 'Source two',
+          url: 'https://www.example.com/source-2',
+          snippet: 'Second source',
+          availability: { ok: true, status: 200, url: 'https://www.example.com/source-2', reason: 'ok' },
+        },
+      ],
+      filteredInaccessibleResults: 0,
+      inaccessibleResultsDetected: false,
+      truncated: false,
+    }),
+  });
+
+  const webFetchDefinition = session.toolRegistry.get('web_fetch');
+  session.toolRegistry.register({
+    ...webFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: args.url.endsWith('source-2') ? 'Source two' : 'Source one',
+      content: `verified content from ${args.url}`,
+    }),
+  });
+
+  const runtime = new AgentRuntime({ provider });
+  const result = await runtime.runUserTurn(session, 'research this topic carefully');
+  const evidenceGuardEvents = session.toolEvents.filter(
+    (event) => event.result?.guard === 'missing_web_evidence'
+  );
+  const completedFetches = session.toolEvents.filter(
+    (event) => event.toolName === 'web_fetch' && event.status === 'completed'
+  );
+
+  assert.equal(result.status, 'completed');
+  assert.equal(completedFetches.length, 2);
+  assert.equal(evidenceGuardEvents.length, 1);
+  assert.match(
+    evidenceGuardEvents[0]?.resultPreview ?? '',
+    /Gather at least 2 fetched sources/i
+  );
+  assert.match(session.messages.at(-1)?.content ?? '', /compare both sources/i);
 });
 
 test('runtime automatically redirects invented web_fetch URLs to a real URL from the latest search results', async () => {

@@ -11,6 +11,12 @@ export const PermissionPreset = Object.freeze({
   FULL_ACCESS: 'full_access',
 });
 
+export const AgentMode = Object.freeze({
+  BUILD: 'build',
+  PLAN: 'plan',
+  RESEARCH: 'research',
+});
+
 export const RiskLevel = Object.freeze({
   LOW: 'low',
   MEDIUM: 'medium',

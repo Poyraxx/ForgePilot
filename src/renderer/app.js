@@ -1,6 +1,7 @@
 import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'https://esm.sh/react@18.3.1';
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 import htm from 'https://esm.sh/htm@3.1.1';
+import { AgentMode } from '../core/contracts.js';
 import { parseAgentEnvelope } from '../core/envelope.js';
 import {
   DEFAULT_LANGUAGE,
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { id: 'search', labelKey: 'nav.search', badge: '/' },
   { id: 'automations', labelKey: 'nav.automations', badge: 'AU' },
 ];
+const AGENT_MODE_OPTIONS = [AgentMode.BUILD, AgentMode.RESEARCH, AgentMode.PLAN];
 const THEME_OPTIONS = [
   {
     id: 'codex',
@@ -147,7 +149,7 @@ function getThemeOptions(t) {
 }
 
 function getQuickPrompts(t) {
-  return [t('quick.summary'), t('quick.readme'), t('quick.tools')];
+  return [t('quick.summary'), t('quick.readme'), t('quick.tools'), t('quick.research')];
 }
 
 function getAutomationGroups(t) {
@@ -242,6 +244,22 @@ function getPermissionLabel(t, presetId) {
 
 function getPermissionDescription(t, presetId) {
   return t(`permission.${presetId}.description`);
+}
+
+function getAgentModeOptions(t) {
+  return AGENT_MODE_OPTIONS.map((id) => ({
+    id,
+    label: t(`agentMode.${id}.label`),
+    description: t(`agentMode.${id}.description`),
+  }));
+}
+
+function getAgentModeLabel(t, modeId) {
+  return t(`agentMode.${normalizeAgentMode(modeId)}.label`);
+}
+
+function getAgentModeDescription(t, modeId) {
+  return t(`agentMode.${normalizeAgentMode(modeId)}.description`);
 }
 
 function resolveUiErrorText(t, errorCode, errorVariables = {}, fallbackMessage = '') {
@@ -363,6 +381,7 @@ function createPreviewApi() {
         },
       },
       model: previewModelsByProvider.ollama[0].name,
+      agentMode: AgentMode.BUILD,
       permissionPreset: 'full_access',
       modelSettings: DEFAULT_MODEL_SETTINGS,
       showRuntimeSettings: false,
@@ -382,6 +401,7 @@ function createPreviewApi() {
       workspaceRoot: payload.workspaceRoot,
       providerId: payload.providerId,
       model: payload.model,
+      agentMode: normalizeAgentMode(payload.agentMode),
       permissionPreset: payload.permissionPreset,
       modelSettings: normalizeModelSettings(payload.modelSettings),
       createdAt: iso(),
@@ -450,6 +470,7 @@ function createPreviewApi() {
         providerConfigs: previewAppState.preferences.providerConfigs,
         providers: previewProviders,
         defaultModel: previewAppState.preferences.model,
+        defaultAgentMode: previewAppState.preferences.agentMode,
         defaultPermissionPreset: previewAppState.preferences.permissionPreset,
         defaultModelSettings: previewAppState.preferences.modelSettings,
         defaultShowRuntimeSettings: previewAppState.preferences.showRuntimeSettings,
@@ -524,6 +545,7 @@ function createPreviewApi() {
             },
           },
           model: payload.model,
+          agentMode: normalizeAgentMode(payload.agentMode),
           permissionPreset: payload.permissionPreset,
           modelSettings: normalizeModelSettings(payload.modelSettings),
           mcpServers: previewAppState.preferences.mcpServers,
@@ -570,6 +592,7 @@ function createPreviewApi() {
           workspaceRoot: payload.workspaceRoot ?? previewAppState.preferences.workspaceRoot,
           providerId: payload.providerId ?? previewAppState.preferences.providerId,
           model: payload.model ?? previewAppState.preferences.model,
+          agentMode: payload.agentMode ?? previewAppState.preferences.agentMode,
           permissionPreset:
             payload.permissionPreset ?? previewAppState.preferences.permissionPreset,
           modelSettings:
@@ -582,6 +605,7 @@ function createPreviewApi() {
         workspaceRoot: payload.workspaceRoot ?? currentSession.workspaceRoot,
         providerId: payload.providerId ?? currentSession.providerId,
         model: payload.model ?? currentSession.model,
+        agentMode: normalizeAgentMode(payload.agentMode ?? currentSession.agentMode),
         permissionPreset: payload.permissionPreset ?? currentSession.permissionPreset,
         modelSettings: normalizeModelSettings(
           payload.modelSettings ?? currentSession.modelSettings
@@ -603,6 +627,7 @@ function createPreviewApi() {
             },
           },
           model: currentSession.model,
+          agentMode: currentSession.agentMode,
           permissionPreset: currentSession.permissionPreset,
           modelSettings: currentSession.modelSettings,
           mcpServers: previewAppState.preferences.mcpServers,
@@ -623,6 +648,7 @@ function createPreviewApi() {
           model:
             previewModelsByProvider[previewAppState.preferences.providerId]?.[0]?.name ??
             previewAppState.preferences.model,
+          agentMode: previewAppState.preferences.agentMode,
           permissionPreset: 'full_access',
           modelSettings: DEFAULT_MODEL_SETTINGS,
         });
@@ -758,6 +784,9 @@ function createPreviewApi() {
           providerConfigs:
             payload.preferences?.providerConfigs ?? previewAppState.preferences.providerConfigs,
           language: payload.preferences?.language ?? previewAppState.preferences.language,
+          agentMode: normalizeAgentMode(
+            payload.preferences?.agentMode ?? previewAppState.preferences.agentMode
+          ),
           modelSettings: normalizeModelSettings(
             payload.preferences?.modelSettings ?? previewAppState.preferences.modelSettings
           ),
@@ -820,6 +849,10 @@ function downloadTextFile(fileName, content) {
   anchor.click();
   anchor.remove();
   globalThis.setTimeout(() => globalThis.URL.revokeObjectURL(url), 0);
+}
+
+function normalizeAgentMode(value) {
+  return AGENT_MODE_OPTIONS.includes(value) ? value : AgentMode.BUILD;
 }
 
 function normalizeModelSettings(modelSettings = DEFAULT_MODEL_SETTINGS) {
@@ -1423,6 +1456,7 @@ function buildSessionConfigPayload(form, providerConfigs = {}) {
     providerId: form.providerId,
     providerConfig: getProviderConfig(providerConfigs, form.providerId),
     model: form.model,
+    agentMode: normalizeAgentMode(form.agentMode),
     permissionPreset: form.permissionPreset,
     modelSettings: normalizeModelSettings(form.modelSettings),
   };
@@ -1438,6 +1472,7 @@ function isSessionConfigDirty(session, form) {
     session.workspaceRoot !== nextConfig.workspaceRoot ||
     (session.providerId ?? 'ollama') !== nextConfig.providerId ||
     session.model !== nextConfig.model ||
+    normalizeAgentMode(session.agentMode) !== nextConfig.agentMode ||
     session.permissionPreset !== nextConfig.permissionPreset ||
     !areModelSettingsEqual(session.modelSettings, nextConfig.modelSettings)
   );
@@ -1734,6 +1769,8 @@ function SettingsModal({
   const selectedProviderConfig = getProviderConfig(providerConfigs, form.providerId);
   const settingsProviderLabel =
     selectedProviderDefinition?.label ?? t('settings.about.notSelected');
+  const settingsAgentModeOptions = getAgentModeOptions(t);
+  const settingsAgentModeLabel = getAgentModeLabel(t, form.agentMode);
 
   return html`
     <div className="settings-overlay" onClick=${onClose}>
@@ -1806,6 +1843,20 @@ function SettingsModal({
                           )}
                         </select>
                         <small>${t('settings.language.help')}</small>
+                      </div>
+                      <div className="field">
+                        <label>${t('settings.agentMode.label')}</label>
+                        <select
+                          value=${form.agentMode}
+                          onChange=${(event) => onUpdateForm('agentMode', event.target.value)}
+                        >
+                          ${settingsAgentModeOptions.map(
+                            (option) => html`
+                              <option key=${option.id} value=${option.id}>${option.label}</option>
+                            `
+                          )}
+                        </select>
+                        <small>${getAgentModeDescription(t, form.agentMode)}</small>
                       </div>
                     </div>
                   </section>
@@ -2221,8 +2272,12 @@ function SettingsModal({
                     </div>
                     <div className="summary-list">
                       <div className="summary-row">
-                        <span>${t('settings.about.mode')}</span>
+                        <span>${t('settings.about.runtime')}</span>
                         <strong>${previewMode ? t('settings.previewMode') : t('settings.about.desktopRuntime')}</strong>
+                      </div>
+                      <div className="summary-row">
+                        <span>${t('settings.about.agentMode')}</span>
+                        <strong>${settingsAgentModeLabel}</strong>
                       </div>
                       <div className="summary-row">
                         <span>${t('settings.about.workspace')}</span>
@@ -2323,6 +2378,7 @@ function App() {
     workspaceRoot: '',
     providerId: 'ollama',
     model: '',
+    agentMode: AgentMode.BUILD,
     permissionPreset: 'full_access',
     modelSettings: {
       contextLength: DEFAULT_MODEL_SETTINGS.contextLength,
@@ -2400,6 +2456,9 @@ function App() {
     session?.toolEvents?.find((event) => event.id === selectedEventId) ??
     session?.toolEvents?.at(-1) ??
     null;
+  const agentModeOptions = getAgentModeOptions(t);
+  const agentModeDescription = getAgentModeDescription(t, form.agentMode);
+  const agentModeLabel = getAgentModeLabel(t, form.agentMode);
   const permissionDescription = getPermissionDescription(t, form.permissionPreset);
   const permissionLabel = getPermissionLabel(t, form.permissionPreset);
   const completedEvents =
@@ -2766,6 +2825,7 @@ function App() {
           providerId: form.providerId,
           providerConfigs,
           model: form.model,
+          agentMode: normalizeAgentMode(form.agentMode),
           permissionPreset: form.permissionPreset,
           modelSettings: normalizeModelSettings(form.modelSettings),
           showRuntimeSettings,
@@ -2899,6 +2959,7 @@ function App() {
       workspaceRoot: nextSession.workspaceRoot,
       providerId: nextSession.providerId ?? form.providerId ?? 'ollama',
       model: nextSession.model,
+      agentMode: normalizeAgentMode(nextSession.agentMode),
       permissionPreset: nextSession.permissionPreset,
       modelSettings: normalizeModelSettings(nextSession.modelSettings),
     });
@@ -3114,6 +3175,9 @@ function App() {
               data.defaultModel ||
               data.models[0]?.name ||
               '',
+            agentMode: normalizeAgentMode(
+              data.activeSession.agentMode ?? data.defaultAgentMode
+            ),
             permissionPreset:
               data.activeSession.permissionPreset ?? data.defaultPermissionPreset,
             modelSettings: normalizeModelSettings(
@@ -3124,6 +3188,7 @@ function App() {
             workspaceRoot: data.defaultWorkspace,
             providerId: data.defaultProviderId ?? data.providers?.[0]?.id ?? 'ollama',
             model: data.defaultModel || data.models[0]?.name || '',
+            agentMode: normalizeAgentMode(data.defaultAgentMode),
             permissionPreset: data.defaultPermissionPreset,
             modelSettings: normalizeModelSettings(data.defaultModelSettings),
           };
@@ -3437,11 +3502,12 @@ function App() {
                 models,
                 providerError: response?.ok === false ? errorMessage : null,
               }
-            : {
+              : {
                 appName: 'ForgePilot',
                 defaultWorkspace: form.workspaceRoot,
                 defaultProviderId: targetProviderId,
                 defaultLanguage: language,
+                defaultAgentMode: normalizeAgentMode(form.agentMode),
                 defaultPermissionPreset: form.permissionPreset,
                 defaultModelSettings: normalizeModelSettings(form.modelSettings),
                 permissionPresets: [],
@@ -4193,6 +4259,7 @@ function App() {
           </div>
           <div className="thread-header-meta">
             <span className=${`capability-pill ${capability.className}`}>${capability.label}</span>
+            <span className="meta-pill">${agentModeLabel}</span>
             <span className="meta-pill">${permissionLabel}</span>
             <span className="meta-pill">ctx ${formatContextLength(form.modelSettings.contextLength)}</span>
           </div>
@@ -4491,6 +4558,20 @@ function App() {
                     (preset) => html`
                       <option key=${preset.id} value=${preset.id}>
                         ${getPermissionLabel(t, preset.id)}
+                      </option>
+                    `
+                  )}
+                </select>
+                <select
+                  className="composer-inline-select composer-inline-select-compact"
+                  value=${form.agentMode}
+                  title=${agentModeDescription}
+                  onChange=${(event) => updateForm('agentMode', event.target.value)}
+                >
+                  ${agentModeOptions.map(
+                    (mode) => html`
+                      <option key=${mode.id} value=${mode.id}>
+                        ${mode.label}
                       </option>
                     `
                   )}

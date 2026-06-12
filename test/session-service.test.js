@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createAbortError } from '../src/core/abort.js';
-import { PermissionPreset } from '../src/core/contracts.js';
+import { AgentMode, PermissionPreset } from '../src/core/contracts.js';
 import { SessionService } from '../src/main/session-service.js';
 
 const DEFAULT_MODEL_SETTINGS = {
@@ -60,6 +60,7 @@ test('session service persists settings and chat history across restarts', async
       language: 'tr',
       workspaceRoot,
       model: 'fake-model',
+      agentMode: AgentMode.RESEARCH,
       permissionPreset: PermissionPreset.ASK,
       modelSettings: {
         contextLength: 65536,
@@ -74,6 +75,7 @@ test('session service persists settings and chat history across restarts', async
   const created = await firstService.createSession({
     workspaceRoot,
     model: 'fake-model',
+    agentMode: AgentMode.RESEARCH,
     permissionPreset: PermissionPreset.ASK,
     modelSettings: {
       contextLength: 65536,
@@ -90,6 +92,7 @@ test('session service persists settings and chat history across restarts', async
   assert.equal(bootstrap.defaultWorkspace, workspaceRoot);
   assert.equal(bootstrap.defaultLanguage, 'tr');
   assert.equal(bootstrap.defaultModel, 'fake-model');
+  assert.equal(bootstrap.defaultAgentMode, AgentMode.RESEARCH);
   assert.equal(bootstrap.defaultPermissionPreset, PermissionPreset.ASK);
   assert.equal(bootstrap.defaultModelSettings.contextLength, 65536);
   assert.equal(bootstrap.defaultModelSettings.temperature, 0.4);
@@ -123,6 +126,7 @@ test('session service can update an existing session config in place and delete 
   const created = await service.createSession({
     workspaceRoot,
     model: 'fake-model',
+    agentMode: AgentMode.BUILD,
     permissionPreset: PermissionPreset.FULL_ACCESS,
     modelSettings: {
       contextLength: 32768,
@@ -136,6 +140,7 @@ test('session service can update an existing session config in place and delete 
   const updated = await service.updateSessionConfig(created.session.id, {
     workspaceRoot: nextWorkspaceRoot,
     model: 'fake-model',
+    agentMode: AgentMode.PLAN,
     permissionPreset: PermissionPreset.ASK,
     modelSettings: {
       contextLength: 131072,
@@ -145,6 +150,7 @@ test('session service can update an existing session config in place and delete 
   });
 
   assert.equal(updated.session.workspaceRoot, nextWorkspaceRoot);
+  assert.equal(updated.session.agentMode, AgentMode.PLAN);
   assert.equal(updated.session.permissionPreset, PermissionPreset.ASK);
   assert.equal(updated.session.modelSettings.contextLength, 131072);
   assert.equal(updated.session.modelSettings.temperature, 0.7);

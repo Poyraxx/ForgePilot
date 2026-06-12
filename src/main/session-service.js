@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 import { AgentRuntime } from '../core/agent/runtime.js';
-import { PermissionPreset, ProviderName, stripExecutableFields } from '../core/contracts.js';
+import {
+  AgentMode,
+  PermissionPreset,
+  ProviderName,
+  stripExecutableFields,
+} from '../core/contracts.js';
 import { McpRegistry } from '../core/mcp/registry.js';
 import { PluginRegistry } from '../core/plugins/registry.js';
 import {
@@ -28,9 +33,16 @@ const DEFAULT_MODEL_SETTINGS = Object.freeze({
   temperature: 0.2,
   systemPrompt: '',
 });
-const STATE_FILE_VERSION = 2;
+const STATE_FILE_VERSION = 3;
 const ACTIVE_TOOL_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const ATTACHMENT_DIRECTORY = path.join('.cokgizlicoder', 'attachments');
+const PLAN_MODE_VISIBLE_TOOL_BLOCKLIST = new Set([
+  'fs_write',
+  'fs_patch',
+  'fs_mkdir',
+  'fs_delete',
+  'run_command',
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -64,6 +76,12 @@ function normalizePermissionPreset(value) {
   return Object.values(PermissionPreset).includes(value)
     ? value
     : PermissionPreset.FULL_ACCESS;
+}
+
+function normalizeAgentMode(value) {
+  return Object.values(AgentMode).includes(value)
+    ? value
+    : AgentMode.BUILD;
 }
 
 function normalizeContextLength(value) {
@@ -116,6 +134,14 @@ function normalizeMcpEnv(value) {
   );
 }
 
+function filterToolDefinitionsForAgentMode(toolDefinitions = [], agentMode) {
+  if (normalizeAgentMode(agentMode) !== AgentMode.PLAN) {
+    return toolDefinitions;
+  }
+
+  return toolDefinitions.filter((tool) => !PLAN_MODE_VISIBLE_TOOL_BLOCKLIST.has(tool?.name));
+}
+
 function normalizeMcpArgs(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -160,6 +186,7 @@ function normalizePreferences(preferences = {}, fallbackRoot = process.cwd()) {
     providerId: normalizeProviderId(preferences.providerId, ProviderName.OLLAMA),
     providerConfigs: normalizeProviderConfigs(preferences.providerConfigs),
     model: String(preferences.model ?? '').trim(),
+    agentMode: normalizeAgentMode(preferences.agentMode),
     permissionPreset: normalizePermissionPreset(preferences.permissionPreset),
     modelSettings: normalizeModelSettings(preferences.modelSettings),
     showRuntimeSettings: Boolean(preferences.showRuntimeSettings),
@@ -518,6 +545,7 @@ export class SessionService {
       providerConfigs: this.appState.preferences.providerConfigs,
       providers: this.#getProviderCatalog(),
       defaultModel,
+      defaultAgentMode: activeSession?.agentMode ?? this.appState.preferences.agentMode,
       defaultPermissionPreset: this.appState.preferences.permissionPreset,
       defaultModelSettings: this.appState.preferences.modelSettings,
       defaultShowRuntimeSettings: this.appState.preferences.showRuntimeSettings,
@@ -603,6 +631,7 @@ export class SessionService {
     providerId,
     providerConfig,
     model,
+    agentMode = AgentMode.BUILD,
     permissionPreset = PermissionPreset.FULL_ACCESS,
     modelSettings = DEFAULT_MODEL_SETTINGS,
   }) {
@@ -629,6 +658,7 @@ export class SessionService {
       workspaceRoot: resolvedWorkspace,
       providerId: selectedProviderId,
       model,
+      agentMode: normalizeAgentMode(agentMode),
       permissionPreset: normalizePermissionPreset(permissionPreset),
       modelSettings: normalizedModelSettings,
       createdAt: nowIso(),
@@ -650,6 +680,7 @@ export class SessionService {
       workspaceRoot: resolvedWorkspace,
       providerId: selectedProviderId,
       model,
+      agentMode: session.agentMode,
       permissionPreset: session.permissionPreset,
       modelSettings: normalizedModelSettings,
     };
@@ -688,6 +719,7 @@ export class SessionService {
       `- Workspace: ${session.workspaceRoot}`,
       `- Provider: ${session.providerId}`,
       `- Model: ${session.model}`,
+      `- Agent mode: ${session.agentMode ?? AgentMode.BUILD}`,
       `- Permission: ${session.permissionPreset}`,
       `- Context length: ${session.modelSettings?.contextLength ?? DEFAULT_MODEL_SETTINGS.contextLength}`,
       `- Temperature: ${session.modelSettings?.temperature ?? DEFAULT_MODEL_SETTINGS.temperature}`,
@@ -914,6 +946,7 @@ export class SessionService {
       providerId,
       providerConfig,
       model,
+      agentMode,
       permissionPreset,
       modelSettings,
     } = {}
@@ -924,6 +957,7 @@ export class SessionService {
     const nextWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot ?? session.workspaceRoot, this.appRoot);
     const nextProviderId = normalizeProviderId(providerId ?? session.providerId, this.defaultProviderId);
     const nextModel = String(model ?? session.model).trim();
+    const nextAgentMode = normalizeAgentMode(agentMode ?? session.agentMode);
     const nextPermissionPreset = normalizePermissionPreset(
       permissionPreset ?? session.permissionPreset
     );
@@ -940,10 +974,18 @@ export class SessionService {
     const workspaceChanged = nextWorkspaceRoot !== session.workspaceRoot;
     const providerChanged = nextProviderId !== session.providerId;
     const modelChanged = nextModel !== session.model;
+    const agentModeChanged = nextAgentMode !== session.agentMode;
     const permissionChanged = nextPermissionPreset !== session.permissionPreset;
     const modelSettingsChanged = !areModelSettingsEqual(nextModelSettings, session.modelSettings);
 
-    if (!workspaceChanged && !providerChanged && !modelChanged && !permissionChanged && !modelSettingsChanged) {
+    if (
+      !workspaceChanged &&
+      !providerChanged &&
+      !modelChanged &&
+      !agentModeChanged &&
+      !permissionChanged &&
+      !modelSettingsChanged
+    ) {
       return {
         status: 'unchanged',
         session: this.serializeSession(session),
@@ -962,6 +1004,7 @@ export class SessionService {
 
     session.providerId = nextProviderId;
     session.model = nextModel;
+    session.agentMode = nextAgentMode;
     session.permissionPreset = nextPermissionPreset;
     session.modelSettings = nextModelSettings;
     session.capabilities = await this.#getProvider(nextProviderId).getCapabilities(
@@ -975,6 +1018,7 @@ export class SessionService {
       workspaceRoot: session.workspaceRoot,
       providerId: session.providerId,
       model: session.model,
+      agentMode: session.agentMode,
       permissionPreset: session.permissionPreset,
       modelSettings: session.modelSettings,
     };
@@ -1110,6 +1154,7 @@ export class SessionService {
       workspaceRoot: session.workspaceRoot,
       providerId: session.providerId,
       model: session.model,
+      agentMode: session.agentMode ?? AgentMode.BUILD,
       permissionPreset: session.permissionPreset,
       modelSettings: session.modelSettings,
       createdAt: session.createdAt,
@@ -1127,8 +1172,10 @@ export class SessionService {
       attachments: Array.isArray(session.attachments)
         ? session.attachments.map(serializeAttachmentRecord)
         : [],
-      availableTools: session.toolRegistry
-        .listVisibleDefinitions(session.permissionPreset)
+      availableTools: filterToolDefinitionsForAgentMode(
+        session.toolRegistry.listVisibleDefinitions(session.permissionPreset),
+        session.agentMode
+      )
         .map((tool) => stripExecutableFields(tool)),
       plugins: session.pluginRegistry.getPlugins(),
     };
@@ -1342,6 +1389,7 @@ export class SessionService {
       workspaceRoot,
       providerId,
       model: String(record.model ?? '').trim(),
+      agentMode: normalizeAgentMode(record.agentMode),
       permissionPreset: normalizePermissionPreset(record.permissionPreset),
       modelSettings: normalizeModelSettings(record.modelSettings),
       createdAt: record.createdAt ?? nowIso(),
@@ -1400,6 +1448,7 @@ export class SessionService {
         workspaceRoot: session.workspaceRoot,
         providerId: session.providerId,
         model: session.model,
+        agentMode: session.agentMode ?? AgentMode.BUILD,
         permissionPreset: session.permissionPreset,
         modelSettings: normalizeModelSettings(session.modelSettings),
         createdAt: session.createdAt,

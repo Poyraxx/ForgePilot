@@ -20,6 +20,10 @@ The core design goal is simple: even if a model does not support native tool cal
   - stricter runtime guards against hallucinated URLs
   - better timeout and network error handling
 - Added thread-level attachment reuse and visible document shelf support in the UI
+- Added agent modes inspired by OpenCode and Odysseus:
+  - `build` for direct implementation
+  - `plan` for read-first analysis
+  - `research` for stricter source-backed investigation
 - Added richer research UX:
   - source cards under research-heavy answers
   - live activity phases
@@ -41,6 +45,10 @@ The core design goal is simple: even if a model does not support native tool cal
   - `read_only`
   - `ask`
   - `full_access`
+- Agent modes
+  - `build`
+  - `plan`
+  - `research`
 - Built-in tools
   - `fs_list`
   - `fs_read`
@@ -80,7 +88,7 @@ The core design goal is simple: even if a model does not support native tool cal
 ## Desktop UX
 
 - Custom top chrome with app-style controls
-- Composer with provider, permission, model, and attachment controls
+- Composer with provider, agent mode, permission, model, and attachment controls
 - Live progress feed for tool execution
 - Live activity phases such as searching, fetching, reading, analyzing, and waiting approval
 - Approval flow for risky tools in `ask` mode
@@ -286,5 +294,7 @@ node --test test/ollama-acceptance.test.js
 - State is persisted locally between restarts
 - Running tool traces are cleaned up on stop and app shutdown
 - Renderer notifications are used for provider and runtime errors instead of console-spam for common user-facing issues
-- Research runs now require at least one successful fetched source before final write-heavy output is accepted in web research flows
+- Research runs now require at least one successful fetched source before final write-heavy output is accepted in standard web research flows
+- `research` mode pushes the agent toward multi-source synthesis before it finalizes a web-backed answer
+- `plan` mode hides workspace-changing tools from the model and keeps the loop in analysis-first behavior
 - Progress export can be used to inspect web/tool behavior when debugging model decisions

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { AgentEnvelopeMode } from '../contracts.js';
+import { AgentEnvelopeMode, AgentMode } from '../contracts.js';
 import { requiresApprovalForTool } from '../permissions.js';
 import { isAbortError, throwIfAborted } from '../abort.js';
 import { resolveWorkspacePath } from '../path-guard.js';
@@ -18,9 +18,20 @@ const EXPLORATORY_TOOL_NAMES = new Set([
   'web_fetch',
   'browser_fetch',
 ]);
+const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
+  'fs_write',
+  'fs_patch',
+  'fs_mkdir',
+  'fs_delete',
+  'run_command',
+]);
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeAgentMode(value) {
+  return Object.values(AgentMode).includes(value) ? value : AgentMode.BUILD;
 }
 
 function humanPath(value) {
@@ -130,6 +141,53 @@ function toolMessageContent(result) {
 
 function summarizeToolCall(toolCall) {
   return `Requested tools: ${toolCall.map((item) => item.name).join(', ')}`;
+}
+
+function getAgentModePrompt(mode) {
+  switch (normalizeAgentMode(mode)) {
+    case AgentMode.PLAN:
+      return [
+        'Agent mode: plan.',
+        'Focus on repository analysis, architecture, risk discovery, and step-by-step planning.',
+        'Prefer read-only investigation and explicit recommendations.',
+        'Do not modify files or run commands that can change the workspace state while plan mode is active.',
+        'If implementation is needed, explain the recommended build-mode next steps first.',
+      ].join('\n');
+    case AgentMode.RESEARCH:
+      return [
+        'Agent mode: research.',
+        'Prioritize source-backed investigation over quick generic answers.',
+        'When using the web, search first, fetch exact discovered URLs, and synthesize only from gathered evidence.',
+        'Aim to compare multiple sources before concluding and clearly note remaining uncertainty.',
+      ].join('\n');
+    case AgentMode.BUILD:
+    default:
+      return [
+        'Agent mode: build.',
+        'Prioritize direct implementation, grounded tool use, and concise progress toward a working result.',
+      ].join('\n');
+  }
+}
+
+function composeRuntimeSystemPrompt(session) {
+  const sections = [
+    getAgentModePrompt(session.agentMode),
+    String(session.modelSettings?.systemPrompt ?? '').trim(),
+  ].filter(Boolean);
+
+  return sections.join('\n\n');
+}
+
+function getRequiredFetchedSourceCount(session) {
+  return normalizeAgentMode(session.agentMode) === AgentMode.RESEARCH ? 2 : 1;
+}
+
+function filterVisibleToolsForAgentMode(toolDefinitions = [], agentMode) {
+  if (normalizeAgentMode(agentMode) !== AgentMode.PLAN) {
+    return toolDefinitions;
+  }
+
+  return toolDefinitions.filter((tool) => !PLAN_MODE_BLOCKED_TOOL_NAMES.has(tool?.name));
 }
 
 function stableStringify(value) {
@@ -675,7 +733,10 @@ export class AgentRuntime {
     try {
       while (countedIterations < this.maxIterations) {
         throwIfAborted(signal);
-        const visibleTools = session.toolRegistry.listVisibleDefinitions(session.permissionPreset);
+        const visibleTools = filterVisibleToolsForAgentMode(
+          session.toolRegistry.listVisibleDefinitions(session.permissionPreset),
+          session.agentMode
+        );
         const contextMessages = buildContextMessages(session);
         const capabilities = await this.provider.getCapabilities(
           session.model,
@@ -699,7 +760,7 @@ export class AgentRuntime {
           useNativeTools: capabilities.nativeTools,
           workspaceRoot: session.workspaceRoot,
           knownPaths: [...(session.knownPaths ?? new Set(['.']))],
-          systemPrompt: session.modelSettings?.systemPrompt ?? '',
+          systemPrompt: composeRuntimeSystemPrompt(session),
           runtimeOptions: {
             numCtx: session.modelSettings?.contextLength,
             temperature: session.modelSettings?.temperature,
@@ -991,11 +1052,12 @@ export class AgentRuntime {
       return null;
     }
 
-    const hasSuccessfulFetch = currentTurnEvents.some(
+    const successfulFetchCount = currentTurnEvents.filter(
       (event) =>
         ['web_fetch', 'browser_fetch'].includes(event.toolName) && event.status === 'completed'
-    );
-    if (hasSuccessfulFetch) {
+    ).length;
+    const requiredFetchCount = getRequiredFetchedSourceCount(session);
+    if (successfulFetchCount >= requiredFetchCount) {
       return null;
     }
 
@@ -1005,7 +1067,13 @@ export class AgentRuntime {
         ? ` Latest exact search-result URLs: ${nearbyUrls.join(', ')}.`
         : '';
 
-    return `This turn started web research but no source page has been fetched successfully yet.${nearbyText} Do not finalize or write conclusions from generic knowledge. Use web_fetch on one exact URL from the latest web_search results, or use browser_fetch if that exact returned page needs JavaScript or blocks normal fetch.`;
+    const remainingFetches = Math.max(1, requiredFetchCount - successfulFetchCount);
+    const sourceHint =
+      requiredFetchCount > 1
+        ? ` Gather at least ${requiredFetchCount} fetched sources before finalizing this research answer.`
+        : '';
+
+    return `This turn started web research but only ${successfulFetchCount} fetched source${successfulFetchCount === 1 ? '' : 's'} succeeded so far.${nearbyText}${sourceHint} Fetch ${remainingFetches} more exact source ${remainingFetches === 1 ? 'page' : 'pages'} from the latest web_search results, or use browser_fetch if a returned page needs JavaScript or blocks normal fetch.`;
   }
 
   #recordMissingWebEvidenceWarning(session, onProgress) {
@@ -1071,6 +1139,12 @@ export class AgentRuntime {
       reason,
       'Do not call any more tools.',
       'Use only the tool results already gathered in this thread.',
+      normalizeAgentMode(session.agentMode) === AgentMode.RESEARCH
+        ? 'Write a source-backed research summary. Reference the strongest fetched pages explicitly and call out uncertainty when evidence is thin.'
+        : '',
+      normalizeAgentMode(session.agentMode) === AgentMode.PLAN
+        ? 'Stay in planning mode: summarize findings, risks, and next implementation steps without pretending changes were already made.'
+        : '',
       recentResults ? `Recent tool results:\n${recentResults}` : '',
       'Reply with your best final answer now. If evidence is partial, say what is still uncertain.',
     ]
@@ -1088,7 +1162,7 @@ export class AgentRuntime {
       useNativeTools: capabilities.nativeTools,
       workspaceRoot: session.workspaceRoot,
       knownPaths: [...(session.knownPaths ?? new Set(['.']))],
-      systemPrompt: session.modelSettings?.systemPrompt ?? '',
+      systemPrompt: composeRuntimeSystemPrompt(session),
       runtimeOptions: {
         numCtx: session.modelSettings?.contextLength,
         temperature: session.modelSettings?.temperature,
@@ -1232,6 +1306,7 @@ export class AgentRuntime {
       }
 
       const warning =
+        this.#buildModeGuardWarning(session, resolvedCall) ??
         (['fs_write', 'fs_patch'].includes(call.name)
           ? this.#buildMissingWebEvidenceWarning(session)
           : null) ??
@@ -1428,6 +1503,18 @@ export class AgentRuntime {
       content: 'İstek durduruldu.',
       createdAt: nowIso(),
     });
+  }
+
+  #buildModeGuardWarning(session, call) {
+    if (normalizeAgentMode(session.agentMode) !== AgentMode.PLAN) {
+      return null;
+    }
+
+    if (!PLAN_MODE_BLOCKED_TOOL_NAMES.has(call.name)) {
+      return null;
+    }
+
+    return `Plan mode is analysis-first and currently blocks workspace-changing actions like ${call.name}. Switch the agent mode to Build if you want the agent to edit files or run commands.`;
   }
 
   #buildUndiscoveredPathWarning(session, call) {
