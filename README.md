@@ -20,7 +20,7 @@ The core design goal is simple: even if a model does not support native tool cal
   - stricter runtime guards against hallucinated URLs
   - better timeout and network error handling
 - Added thread-level attachment reuse and visible document shelf support in the UI
-- Added agent modes inspired by OpenCode and Odysseus:
+- Added agent modes:
   - `build` for direct implementation
   - `plan` for read-first analysis
   - `research` for stricter source-backed investigation
