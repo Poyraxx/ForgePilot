@@ -157,10 +157,11 @@ test('built-in tools can write, read, patch, search, and delete files', async ()
 
   const commandResult = await registry.execute(
     'run_command',
-    { command: process.platform === 'win32' ? 'Write-Output "ok"' : 'printf ok' },
+    { command: process.platform === 'win32' ? 'Write-Output "ok"' : 'printf ok', timeoutMs: 60000 },
     context
   );
-  assert.equal(commandResult.exitCode, 0);
+  assert.equal(commandResult.timedOut, false, JSON.stringify(commandResult));
+  assert.equal(commandResult.exitCode, 0, JSON.stringify(commandResult));
   assert.match(commandResult.stdout, /ok/);
 
   await registry.execute('fs_delete', { path: 'notes.txt' }, context);
