@@ -490,10 +490,10 @@ function getLatestSearchResultUrls(session, limit = 6) {
 }
 
 function getLatestSearchResultCandidates(session) {
-  const currentTurnEvents = getCurrentTurnToolEvents(session);
-  for (let index = currentTurnEvents.length - 1; index >= 0; index -= 1) {
-    const event = currentTurnEvents[index];
-    if (event.toolName !== 'web_search' || !Array.isArray(event.result?.results)) {
+  const searchEvents = session.toolEvents ?? [];
+  for (let index = searchEvents.length - 1; index >= 0; index -= 1) {
+    const event = searchEvents[index];
+    if (event.toolName !== 'web_search' || event.status !== 'completed' || !Array.isArray(event.result?.results)) {
       continue;
     }
 

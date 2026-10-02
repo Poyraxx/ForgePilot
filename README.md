@@ -4,6 +4,12 @@ ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It 
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
+## What's New in v2.4.1
+
+- Reuse the latest successful web search from earlier turns when redirecting an invented URL to a discovered result. This no longer depends on matching message timestamps.
+- Keep Windows command smoke tests tolerant of cold shell startup and web error tests independent of real browser/network availability.
+- Publish tagged releases only after every platform build succeeds; partial uploads remain drafts.
+
 ## What's New in v2.4.0
 
 - Render assistant responses as safe Markdown with tables, task lists, code blocks, and copy controls.

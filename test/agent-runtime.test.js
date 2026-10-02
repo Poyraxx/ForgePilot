@@ -800,8 +800,8 @@ test('runtime does not treat invented web URLs as newly discovered URLs later in
     toolName: 'web_search',
     arguments: { query: 'example query' },
     status: 'completed',
-    createdAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 60000).toISOString(),
+    completedAt: new Date(Date.now() - 59000).toISOString(),
     resultPreview: 'Found 1 web results for "example query".',
     result: {
       query: 'example query',
