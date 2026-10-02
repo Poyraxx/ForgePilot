@@ -709,13 +709,14 @@ test('runtime allows web_fetch by exact web_search resultId without copying the 
   };
 
   const session = await createSession(provider);
+  const earlierSearchAt = new Date(Date.now() - 60_000).toISOString();
   session.toolEvents.push({
     id: 'event-search-resultid-1',
     toolName: 'web_search',
     arguments: { query: 'result id test' },
     status: 'completed',
-    createdAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
+    createdAt: earlierSearchAt,
+    completedAt: earlierSearchAt,
     resultPreview: 'Found 1 web results for "result id test".',
     result: {
       query: 'result id test',

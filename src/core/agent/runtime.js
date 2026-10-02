@@ -340,7 +340,24 @@ function resolveKnownWebResultUrl(session, resultId) {
     return '';
   }
 
-  return String(session.knownWebResultMap?.get(normalizedId) ?? '').trim();
+  const cached = String(session.knownWebResultMap?.get(normalizedId) ?? '').trim();
+  if (cached) {
+    return cached;
+  }
+
+  for (const event of [...(session.toolEvents ?? [])].reverse()) {
+    if (event.toolName !== 'web_search' || event.status !== 'completed') {
+      continue;
+    }
+
+    const result = event.result?.results?.find((entry) => String(entry?.id ?? '').trim() === normalizedId);
+    if (result?.url) {
+      trackKnownWebResult(session, normalizedId, result.url);
+      return String(session.knownWebResultMap?.get(normalizedId) ?? '').trim();
+    }
+  }
+
+  return '';
 }
 
 function buildAttachmentInventoryMessage(session) {
