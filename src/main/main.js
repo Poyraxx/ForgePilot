@@ -2,7 +2,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 
-import { Menu, app, BrowserWindow, dialog, ipcMain, screen } from 'electron';
+import { Menu, app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
+import { safeExternalUrl } from '../core/external-url.js';
 
 import { resolveAppIconPath } from '../core/platform.js';
 import { SessionService } from './session-service.js';
@@ -200,6 +201,9 @@ function createWindow() {
 
   const window = new BrowserWindow(windowOptions);
 
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event) => event.preventDefault());
+
   window.setMenuBarVisibility(false);
   window.removeMenu();
   bindWindowStateEvents(window);
@@ -290,6 +294,12 @@ function registerIpc() {
   });
 
   ipcMain.handle('app:bootstrap', async () => sessionService.bootstrap());
+  ipcMain.handle('app:open-external', async (_event, value) => {
+    const url = safeExternalUrl(value);
+    if (!url) return false;
+    await shell.openExternal(url);
+    return true;
+  });
   ipcMain.handle('app:choose-workspace', async (_event, defaultPath) => {
     const result = await dialog.showOpenDialog({
       title: 'Select Workspace',

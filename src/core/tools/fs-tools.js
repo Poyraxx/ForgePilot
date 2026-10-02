@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { throwIfAborted } from '../abort.js';
 import { createToolDefinition, RiskLevel } from '../contracts.js';
@@ -12,6 +13,29 @@ import {
   readUtf8FileWithBinaryGuard,
   supportsStructuredDocumentRead,
 } from './document-extractor.js';
+
+export function fileVersionKey(targetPath) {
+  const resolved = path.resolve(targetPath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function contentVersion(content) {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function assertFileVersion(context, targetPath, content, requestedPath) {
+  const expected = context.fileVersions?.get(fileVersionKey(targetPath));
+  const actual = content === null ? null : contentVersion(content);
+  if (expected && expected !== actual) {
+    throw new Error(`File "${requestedPath}" changed since it was last read or edited. Read it again with fs_read before editing; the current file was not changed.`);
+  }
+}
+
+function recordFileVersion(context, targetPath, content) {
+  const version = contentVersion(content);
+  context.fileVersions?.set(fileVersionKey(targetPath), version);
+  return version;
+}
 
 async function listEntries(targetPath, recursive, maxEntries, signal) {
   const entries = [];
@@ -174,6 +198,7 @@ export function createFileTools() {
           }
         } catch (error) {
           if (error?.code === 'ENOENT') {
+            context.fileVersions?.delete(fileVersionKey(targetPath));
             const nearbyEntries = await listNearbyEntries(context.workspaceRoot, args.path);
             const nearbyText =
               nearbyEntries.length > 0
@@ -195,6 +220,7 @@ export function createFileTools() {
           format,
           metadata,
           readableFormats: describeReadableFormats(),
+          version: extracted ? null : recordFileVersion(context, targetPath, rawContent),
           ...lineWindow,
         };
       },
@@ -230,11 +256,16 @@ export function createFileTools() {
           created = true;
         }
 
-        await fs.writeFile(targetPath, String(args.content ?? ''), 'utf8');
+        assertFileVersion(context, targetPath, created ? null : previousContent, args.path);
+        const nextContent = String(args.content ?? '');
+        throwIfAborted(context.signal, 'File write stopped by user.');
+
+        await fs.writeFile(targetPath, nextContent, 'utf8');
 
         return {
           path: relativizeWorkspacePath(context.workspaceRoot, targetPath),
           created,
+          version: recordFileVersion(context, targetPath, nextContent),
           bytesWritten: Buffer.byteLength(String(args.content ?? ''), 'utf8'),
           diff: createUnifiedDiff(previousContent, String(args.content ?? ''), args.path),
         };
@@ -259,8 +290,9 @@ export function createFileTools() {
         throwIfAborted(context.signal, 'File patch stopped by user.');
         const targetPath = resolveWorkspacePath(context.workspaceRoot, args.path);
         const previousContent = await fs.readFile(targetPath, 'utf8');
-        const oldText = typeof args.oldText === 'string' ? args.oldText : '';
-        const newText = String(args.newText ?? '');
+        assertFileVersion(context, targetPath, previousContent, args.path);
+        let oldText = typeof args.oldText === 'string' ? args.oldText : '';
+        let newText = String(args.newText ?? '');
 
         if (oldText === '') {
           throw new Error(
@@ -269,6 +301,10 @@ export function createFileTools() {
         }
 
         const replaceAll = Boolean(args.replaceAll);
+        if (previousContent.includes('\r\n') && !previousContent.replace(/\r\n/g, '').includes('\n')) {
+          oldText = oldText.replace(/\r?\n/g, '\r\n');
+          newText = newText.replace(/\r?\n/g, '\r\n');
+        }
         const occurrences = previousContent.split(oldText).length - 1;
 
         if (occurrences === 0) {
@@ -277,15 +313,21 @@ export function createFileTools() {
           );
         }
 
+        if (occurrences > 1 && !replaceAll) {
+          throw new Error(`Text matches ${occurrences} places in "${args.path}". Include more surrounding text to select one match, or set replaceAll to true intentionally.`);
+        }
+
         const nextContent = replaceAll
           ? previousContent.split(oldText).join(newText)
           : previousContent.replace(oldText, newText);
 
+        throwIfAborted(context.signal, 'File patch stopped by user.');
         await fs.writeFile(targetPath, nextContent, 'utf8');
 
         return {
           path: relativizeWorkspacePath(context.workspaceRoot, targetPath),
           replacements: replaceAll ? occurrences : 1,
+          version: recordFileVersion(context, targetPath, nextContent),
           diff: createUnifiedDiff(previousContent, nextContent, args.path),
         };
       },

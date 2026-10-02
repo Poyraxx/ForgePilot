@@ -1,4 +1,6 @@
 export default {
+  'message.copy': 'Copy',
+  'message.copied': 'Copied',
   "nav.new": "New chat",
   "nav.search": "Search",
   "nav.automations": "Automations",

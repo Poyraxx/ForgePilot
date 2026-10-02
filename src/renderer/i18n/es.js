@@ -2,6 +2,8 @@ import en from './en.js';
 
 export default {
   ...en,
+  'message.copy': 'Copiar',
+  'message.copied': 'Copiado',
   'nav.new': 'Nuevo chat',
   'nav.search': 'Buscar',
   'nav.automations': 'Automatizaciones',

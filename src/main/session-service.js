@@ -1176,6 +1176,10 @@ export class SessionService {
 
   #emitSessionUpdate(session, meta = {}) {
     const { session: _rawSession, ...safeMeta } = meta ?? {};
+    if (safeMeta.phase === 'assistant_stream') {
+      this.events.emit('session-updated', { sessionId: session.id, ...safeMeta });
+      return;
+    }
     this.events.emit('session-updated', {
       sessionId: session.id,
       session: this.serializeSession(session),

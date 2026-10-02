@@ -4,6 +4,29 @@ ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It 
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
+## What's New in v2.4.0
+
+- Render assistant responses as safe Markdown with tables, task lists, code blocks, and copy controls.
+- Expand file changes directly inside chat, with added and removed lines highlighted.
+- Keep reasoning collapsed by default, reduce composer height, and grow the input as you type.
+- Collapse source lists, open sources directly in the browser, and remove duplicated header controls.
+- Send with Enter and insert a new line with Shift+Enter, including composition-safe keyboard handling.
+- Send lightweight streaming updates rather than the full conversation for each chunk.
+- Automatically load root-level `AGENTS.md` and discover project skills in `.agents/skills`, `.claude/skills`, and `.opencode/skills`. Skill bodies are read on demand with `fs_read`.
+- Compact older turns using an approximate context-size budget as well as message count. Large tool outputs are shortened for the model without changing saved history or breaking native tool-call pairs.
+- Reject file writes and patches when a previously read or edited file has changed externally, including after reopening saved threads. Read the file again to continue.
+- Reject ambiguous patch matches unless `replaceAll` is explicitly requested.
+- Accept LF patch excerpts for Windows CRLF files while preserving their line endings.
+- Open only HTTP/HTTPS links in the external browser; model HTML is displayed as text and remote Markdown images are not loaded automatically.
+
+## Project Instructions and Skills
+
+Put project instructions in `AGENTS.md` at the workspace root. ForgePilot reloads them at the beginning of each run. Files larger than 24 KB are not loaded automatically; read those explicitly with the file tools.
+
+Skills use `<directory>/<skill-name>/SKILL.md` under one of the three supported skill directories above. Use YAML frontmatter with a `name` and `description`, followed by the instructions. ForgePilot includes a bounded catalog of descriptions and exact paths, not every skill's full content, in the model context. Existing permission presets and agent modes still apply to skill-directed tool use.
+
+Context budgeting is an estimate, not a provider-specific tokenizer. It preserves the latest user turn and its tool calls; unusually large single turns or tool catalogs may still exceed a model's context limit. File freshness checks protect the built-in `fs_write` and `fs_patch` tools, not edits made through terminal commands or external MCP tools.
+
 ## What's New in v2.3.1
 
 - Bundled the renderer locally so the desktop UI opens without loading React from an external CDN.

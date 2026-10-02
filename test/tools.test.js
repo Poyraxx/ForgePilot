@@ -202,6 +202,50 @@ test('fs_read reports a helpful error for missing files', async () => {
   );
 });
 
+test('file edits refuse stale content and permit an explicit reread', async (t) => {
+  const workspaceRoot = await createWorkspace();
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const registry = new ToolRegistry(createBuiltInTools());
+  const context = { ...createContext(workspaceRoot), fileVersions: new Map() };
+  await fs.writeFile(path.join(workspaceRoot, 'notes.txt'), 'alpha\nbeta');
+  const original = await registry.execute('fs_read', { path: 'notes.txt', startLine: 1, endLine: 1 }, context);
+  assert.equal(original.version.length, 64);
+  await fs.writeFile(path.join(workspaceRoot, 'notes.txt'), 'alpha\nuser change');
+  await assert.rejects(() => registry.execute('fs_patch', { path: 'notes.txt', oldText: 'alpha', newText: 'gamma' }, context), /changed since it was last read/);
+  await assert.rejects(() => registry.execute('fs_write', { path: 'notes.txt', content: 'overwrite' }, context), /changed since it was last read/);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'), 'alpha\nuser change');
+  await registry.execute('fs_read', { path: 'notes.txt' }, context);
+  await registry.execute('fs_patch', { path: 'notes.txt', oldText: 'alpha', newText: 'gamma' }, context);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'), 'gamma\nuser change');
+  await fs.unlink(path.join(workspaceRoot, 'notes.txt'));
+  await assert.rejects(() => registry.execute('fs_write', { path: 'notes.txt', content: 'recreate' }, context), /changed since it was last read/);
+  await assert.rejects(() => registry.execute('fs_read', { path: 'notes.txt' }, context), /was not found/);
+  await registry.execute('fs_write', { path: 'notes.txt', content: 'recreate' }, context);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'), 'recreate');
+});
+
+test('patches refuse ambiguous matches unless replaceAll is explicit', async (t) => {
+  const workspaceRoot = await createWorkspace();
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const registry = new ToolRegistry(createBuiltInTools());
+  const context = createContext(workspaceRoot);
+  await fs.writeFile(path.join(workspaceRoot, 'notes.txt'), 'same\nsame');
+  await assert.rejects(() => registry.execute('fs_patch', { path: 'notes.txt', oldText: 'same', newText: 'new' }, context), /matches 2 places/);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'), 'same\nsame');
+  const result = await registry.execute('fs_patch', { path: 'notes.txt', oldText: 'same', newText: 'new', replaceAll: true }, context);
+  assert.equal(result.replacements, 2);
+});
+
+test('patching Windows files accepts LF excerpts while preserving CRLF', async (t) => {
+  const workspaceRoot = await createWorkspace();
+  t.after(() => fs.rm(workspaceRoot, { recursive: true, force: true }));
+  const registry = new ToolRegistry(createBuiltInTools());
+  const context = createContext(workspaceRoot);
+  await fs.writeFile(path.join(workspaceRoot, 'notes.txt'), 'alpha\r\nbeta\r\ngamma\r\n');
+  await registry.execute('fs_patch', { path: 'notes.txt', oldText: 'alpha\nbeta', newText: 'one\ntwo' }, context);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, 'notes.txt'), 'utf8'), 'one\r\ntwo\r\ngamma\r\n');
+});
+
 test('fs_read can extract text from PDF, DOCX, and XLSX files', async () => {
   const workspaceRoot = await createWorkspace();
   await createStructuredFixtures(workspaceRoot);

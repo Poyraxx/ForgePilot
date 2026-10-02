@@ -571,6 +571,33 @@ test('session service emits serializable live session updates', async () => {
   assert.equal('pluginRegistry' in updates[0].session, false);
 });
 
+test('streaming updates do not resend the session history for each chunk', async (t) => {
+  const appRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'forgepilot-stream-'));
+  t.after(() => fs.rm(appRoot, { recursive: true, force: true }));
+  const workspaceRoot = path.join(appRoot, 'workspace');
+  await fs.mkdir(workspaceRoot);
+  const provider = {
+    ...createFakeProvider(),
+    async runStreamingTurn({ onChunk }) {
+      onChunk({ content: 'A' });
+      onChunk({ content: 'Answer' });
+      return { message: 'Answer', toolCalls: [] };
+    },
+  };
+  const service = new SessionService({ appRoot, provider, statePath: path.join(appRoot, 'state.json') });
+  const { session } = await service.createSession({ workspaceRoot, model: 'fake-model', permissionPreset: PermissionPreset.FULL_ACCESS });
+  const updates = [];
+  const unsubscribe = service.onSessionUpdate((payload) => updates.push(payload));
+  await service.sendUserMessage(session.id, 'Stream an answer');
+  unsubscribe();
+  const chunks = updates.filter((payload) => payload.phase === 'assistant_stream');
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks.at(-1).streamText, 'Answer');
+  assert.equal(chunks.at(-1).sessionId, session.id);
+  assert.equal(chunks.at(-1).session, undefined);
+  assert.equal(updates.at(-1).session.messages.at(-1).content, 'Answer');
+});
+
 test('session service persists provider choice and provider config for multi-provider sessions', async () => {
   const appRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cokgizlicoder-app-'));
   const workspaceRoot = path.join(appRoot, 'workspace');

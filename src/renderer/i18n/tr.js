@@ -1,4 +1,6 @@
 export default {
+  'message.copy': 'Kopyala',
+  'message.copied': 'Kopyalandı',
   "nav.new": "Yeni sohbet",
   "nav.search": "Arama",
   "nav.automations": "Otomasyonlar",

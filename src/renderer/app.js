@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import htm from 'htm';
 import { AgentMode } from '../core/contracts.js';
 import { parseAgentEnvelope } from '../core/envelope.js';
+import { MessageContent, CopyButton } from './message-content.js';
+import { safeExternalUrl } from '../core/external-url.js';
 import {
   DEFAULT_LANGUAGE,
   LANGUAGE_OPTIONS,
@@ -1269,12 +1271,14 @@ function buildMessageChangeCards(session) {
         badge: '',
         created: false,
         eventId: event.id,
+        diffs: [],
       };
 
       previous.added += diffCounts.added;
       previous.removed += diffCounts.removed;
       previous.created = previous.created || Boolean(event.result?.created);
       previous.eventId = event.id;
+      if (event.diffText) previous.diffs.push(event.diffText);
       previous.badge =
         previous.badge ||
         getChangeBadge(event.toolName, {
@@ -2464,9 +2468,7 @@ function App() {
     null;
   const agentModeOptions = getAgentModeOptions(t);
   const agentModeDescription = getAgentModeDescription(t, form.agentMode);
-  const agentModeLabel = getAgentModeLabel(t, form.agentMode);
   const permissionDescription = getPermissionDescription(t, form.permissionPreset);
-  const permissionLabel = getPermissionLabel(t, form.permissionPreset);
   const completedEvents =
     session?.toolEvents?.filter((event) => event.status === 'completed').length ?? 0;
   const progressRows = session?.toolEvents?.slice(-5).reverse() ?? [];
@@ -2564,15 +2566,15 @@ function App() {
     }
 
     const unsubscribe = api.onSessionStateChange((payload) => {
-      if (!payload?.session?.id) {
-        return;
-      }
-
-      if (payload.phase === 'assistant_stream') {
+      if (payload?.phase === 'assistant_stream') {
+        if (payload.sessionId !== activeThreadId && payload.sessionId !== session?.id) return;
         setLivePhase(payload.phase);
         setLiveStreamText(summarizeLiveStreamContent(payload.streamText ?? '', t));
         setLiveStreamThinking(clampLivePreview(String(payload.streamThinking ?? ''), 800, 10));
-      } else if (
+        return;
+      }
+      if (!payload?.session?.id) return;
+      if (
         ['completed', 'error', 'cancelled', 'approval_required', 'tool_completed', 'tool_failed', 'tool_blocked'].includes(
           payload.phase
         )
@@ -2606,13 +2608,20 @@ function App() {
     return () => {
       unsubscribe?.();
     };
-  }, [activeThreadId, session?.id]);
+  }, [activeThreadId, session?.id, language]);
 
   useEffect(() => {
     if (messagesRef.current && stickToBottomRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [deferredMessages, session?.pendingApproval]);
+
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(180, Math.max(60, textarea.scrollHeight))}px`;
+  }, [input, activeThreadId]);
 
   useEffect(() => {
     stickToBottomRef.current = true;
@@ -3368,6 +3377,7 @@ function App() {
 
   async function handleSend(event) {
     event.preventDefault();
+    if (busy || isTurnRunning || isStopPending || session?.pendingApproval || !form.workspaceRoot || !effectiveModelName) return;
     if (!input.trim() && attachments.length === 0) {
       return;
     }
@@ -4267,13 +4277,10 @@ function App() {
       <main className="thread-column">
         <header className="thread-header">
           <div className="thread-header-copy">
-            <div className="thread-kicker">${t('thread.kicker')}</div>
             <h1>${threadTitle}</h1>
           </div>
           <div className="thread-header-meta">
             <span className=${`capability-pill ${capability.className}`}>${capability.label}</span>
-            <span className="meta-pill">${agentModeLabel}</span>
-            <span className="meta-pill">${permissionLabel}</span>
             <span className="meta-pill">ctx ${formatContextLength(form.modelSettings.contextLength)}</span>
           </div>
         </header>
@@ -4318,47 +4325,57 @@ function App() {
                       <span>${message.role === 'user' ? t('chat.you') : t('chat.agent')}</span>
                       <span>${formatTimestamp(message.createdAt, language)}</span>
                     </div>
-                    <div className="chat-content">${message.content}</div>
+                    ${message.role === 'assistant'
+                      ? html`<${MessageContent} content=${message.content} t=${t} language=${language} />`
+                      : html`<div className="chat-content">${message.content}</div>`}
+                    ${message.role === 'assistant'
+                      ? html`<div className="message-actions"><${CopyButton} content=${message.content} t=${t} /></div>`
+                      : null}
                     ${message.thinking
-                      ? html`<div className="chat-thinking">${message.thinking}</div>`
+                      ? html`<details className="chat-thinking"><summary>${t('status.thinking')}</summary><div>${message.thinking}</div></details>`
                       : null}
                     ${message.role === 'assistant' && messageSourceCards.has(message.id)
                       ? (() => {
                           const sourceCard = messageSourceCards.get(message.id);
                           return html`
-                            <div className="source-card">
-                              <div className="source-card-header">
+                            <details className="source-card">
+                              <summary className="source-card-header">
                                 <strong>${t('sources.usedSources')}</strong>
                                 <span>${t('sources.count', { count: sourceCard.totalSources })}</span>
-                              </div>
+                              </summary>
                               <div className="source-card-list">
                                 ${sourceCard.sources.map(
                                   (source) => html`
-                                    <button
+                                    <div
                                       key=${source.id}
-                                      type="button"
                                       className="source-card-row"
-                                      onClick=${() => source.eventId && selectEvent(source.eventId)}
                                     >
                                       <div className="source-card-row-copy">
-                                        <strong>${source.title}</strong>
+                                        <a href=${safeExternalUrl(source.url) ?? undefined} target="_blank" rel="noopener noreferrer" onClick=${(event) => {
+                                          const url = safeExternalUrl(source.url);
+                                          if (!url) { event.preventDefault(); return; }
+                                          if (api.openExternal) {
+                                            event.preventDefault();
+                                            void api.openExternal(url).catch(() => {});
+                                          }
+                                        }}><strong>${source.title}</strong></a>
                                         <span>${source.url}</span>
                                         ${source.snippet
                                           ? html`<small>${source.snippet}</small>`
                                           : null}
                                       </div>
-                                      <span className="source-card-kind">
+                                      <button type="button" className="source-card-kind" onClick=${() => source.eventId && selectEvent(source.eventId)}>
                                         ${source.kind === 'browser'
                                           ? t('sources.browserFetch')
                                           : source.kind === 'fetch'
                                             ? t('sources.webFetch')
                                             : t('sources.webSearch')}
-                                      </span>
-                                    </button>
+                                      </button>
+                                    </div>
                                   `
                                 )}
                               </div>
-                            </div>
+                            </details>
                           `;
                         })()
                       : null}
@@ -4388,12 +4405,11 @@ function App() {
                               <div className="change-card-list">
                                 ${changeCard.files.map(
                                   (fileChange) => html`
-                                    <button
+                                    <details
                                       key=${`${message.id}-${fileChange.path}`}
-                                      type="button"
-                                      className="change-card-row"
-                                      onClick=${() => fileChange.eventId && selectEvent(fileChange.eventId)}
+                                      className="change-file"
                                     >
+                                      <summary className="change-card-row">
                                       <strong>${fileChange.path}</strong>
                                       <div className="change-card-row-meta">
                                         ${fileChange.badge
@@ -4403,7 +4419,10 @@ function App() {
                                               <span className="change-card-removed">-${fileChange.removed}</span>
                                             `}
                                       </div>
-                                    </button>
+                                      </summary>
+                                      ${fileChange.diffs.map((diffText, index) => html`<pre key=${index} className="change-diff">${diffText.split('\n').map((line, lineIndex) => html`<span key=${lineIndex} className=${line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++') ? 'diff-header' : line.startsWith('+') ? 'diff-added' : line.startsWith('-') ? 'diff-removed' : ''}>${line || ' '}</span>`)}</pre>`)}
+                                      <button type="button" className="change-card-action change-file-inspect" onClick=${() => fileChange.eventId && selectEvent(fileChange.eventId)}>${t('change.inspect')}</button>
+                                    </details>
                                   `
                                 )}
                               </div>
@@ -4505,6 +4524,12 @@ function App() {
                   : t('composer.placeholder')
               }
               onInput=${(event) => setInput(event.target.value)}
+              onKeyDown=${(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !busy && !isTurnRunning && !isStopPending && !session?.pendingApproval && form.workspaceRoot && effectiveModelName) {
+                  event.preventDefault();
+                  event.currentTarget.form.requestSubmit();
+                }
+              }}
             ></textarea>
             ${attachments.length > 0
               ? html`

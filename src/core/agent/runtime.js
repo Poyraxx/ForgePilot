@@ -6,6 +6,8 @@ import { AgentEnvelopeMode, AgentMode } from '../contracts.js';
 import { canUseToolInAgentMode, requiresApprovalForTool } from '../permissions.js';
 import { isAbortError, throwIfAborted } from '../abort.js';
 import { resolveWorkspacePath } from '../path-guard.js';
+import { loadWorkspaceContext } from './workspace-context.js';
+import { fileVersionKey } from '../tools/fs-tools.js';
 
 const CONTEXT_COMPACTION_TRIGGER_MESSAGE_COUNT = 36;
 const CONTEXT_COMPACTION_RECENT_MESSAGE_COUNT = 20;
@@ -166,6 +168,7 @@ function composeRuntimeSystemPrompt(session) {
   const sections = [
     getAgentModePrompt(session.agentMode),
     String(session.modelSettings?.systemPrompt ?? '').trim(),
+    session.workspacePrompt ?? '',
   ].filter(Boolean);
 
   return sections.join('\n\n');
@@ -608,27 +611,42 @@ function buildCompactedConversationSummary(session, compactedMessages, recentMes
   };
 }
 
-function buildContextMessages(session) {
+function estimateContextSize(messages) {
+  return Math.ceil(JSON.stringify(messages).length / 3);
+}
+
+function buildContextMessages(session, tools = []) {
   const sourceMessages = session.messages ?? [];
   const attachmentInventoryMessage = buildAttachmentInventoryMessage(session);
-
-  if (sourceMessages.length <= CONTEXT_COMPACTION_TRIGGER_MESSAGE_COUNT) {
-    session.contextCompression = null;
-    return attachmentInventoryMessage
-      ? [attachmentInventoryMessage, ...sourceMessages]
-      : sourceMessages;
+  const contextLength = Number(session.modelSettings?.contextLength) || 32768;
+  const fixedSize = estimateContextSize([composeRuntimeSystemPrompt(session), tools, attachmentInventoryMessage]);
+  const budget = Math.max(512, Math.floor(contextLength * 0.65) - fixedSize);
+  const latestUserIndex = Math.max(0, sourceMessages.findLastIndex((message) => message.role === 'user'));
+  const toolCount = sourceMessages.filter((message) => message.role === 'tool').length;
+  const outputLimit = Math.max(1000, Math.min(16000, Math.floor(budget * 3 / (Math.min(toolCount, 8) + 2))));
+  let shortenedToolCount = 0;
+  const boundedMessages = sourceMessages.map((message) => {
+    if (message.role !== 'tool' || typeof message.content !== 'string' || message.content.length <= outputLimit) return message;
+    shortenedToolCount += 1;
+    const tail = Math.floor(outputLimit / 4);
+    return { ...message, content: `${message.content.slice(0, outputLimit - tail)}\n[Tool output shortened for context. Use the tool again with a narrower range if needed.]\n${message.content.slice(-tail)}` };
+  });
+  let cutoffIndex = sourceMessages.length > CONTEXT_COMPACTION_TRIGGER_MESSAGE_COUNT
+    ? Math.max(0, sourceMessages.length - CONTEXT_COMPACTION_RECENT_MESSAGE_COUNT)
+    : 0;
+  while (cutoffIndex > 0 && sourceMessages[cutoffIndex]?.role !== 'user') cutoffIndex -= 1;
+  cutoffIndex = Math.min(cutoffIndex, latestUserIndex);
+  while (cutoffIndex < latestUserIndex && estimateContextSize(boundedMessages.slice(cutoffIndex)) > budget) {
+    const nextUser = boundedMessages.findIndex((message, index) => index > cutoffIndex && message.role === 'user');
+    if (nextUser < 0) break;
+    cutoffIndex = nextUser;
   }
-
-  const cutoffIndex = Math.max(
-    0,
-    sourceMessages.length - CONTEXT_COMPACTION_RECENT_MESSAGE_COUNT
-  );
   const compactedMessages = sourceMessages.slice(0, cutoffIndex);
-  const recentMessages = sourceMessages.slice(cutoffIndex);
+  const recentMessages = boundedMessages.slice(cutoffIndex);
 
   if (compactedMessages.length === 0) {
-    session.contextCompression = null;
-    return sourceMessages;
+    session.contextCompression = shortenedToolCount ? { compressedMessageCount: 0, keptMessageCount: recentMessages.length, shortenedToolCount, updatedAt: nowIso() } : null;
+    return attachmentInventoryMessage ? [attachmentInventoryMessage, ...recentMessages] : recentMessages;
   }
 
   const summaryMessage = buildCompactedConversationSummary(
@@ -640,6 +658,7 @@ function buildContextMessages(session) {
   session.contextCompression = {
     compressedMessageCount: compactedMessages.length,
     keptMessageCount: recentMessages.length,
+    shortenedToolCount,
     summary: summaryMessage.content,
     updatedAt: nowIso(),
   };
@@ -741,13 +760,16 @@ export class AgentRuntime {
     let countedIterations = tracker.countedIterations;
 
     try {
+      const workspaceContext = await loadWorkspaceContext(session.workspaceRoot);
+      session.workspacePrompt = workspaceContext.prompt;
+      for (const filePath of workspaceContext.paths) trackKnownPath(session, filePath);
       while (countedIterations < this.maxIterations) {
         throwIfAborted(signal);
         const visibleTools = filterVisibleToolsForAgentMode(
           session.toolRegistry.listVisibleDefinitions(session.permissionPreset),
           session.agentMode
         );
-        const contextMessages = buildContextMessages(session);
+        const contextMessages = buildContextMessages(session, visibleTools);
         const capabilities = await this.provider.getCapabilities(
           session.model,
           session.capabilityOverride ?? {}
@@ -1431,11 +1453,23 @@ export class AgentRuntime {
     });
 
     try {
+      if (!session.fileVersions) {
+        session.fileVersions = new Map();
+        for (const previousEvent of session.toolEvents) {
+          if (previousEvent.status !== 'completed' || !previousEvent.result?.version || !previousEvent.result?.path) continue;
+          try {
+            session.fileVersions.set(fileVersionKey(resolveWorkspacePath(session.workspaceRoot, previousEvent.result.path)), previousEvent.result.version);
+          } catch {
+            continue;
+          }
+        }
+      }
       const result = await session.toolRegistry.execute(call.name, call.arguments, {
         workspaceRoot: session.workspaceRoot,
         permissionPreset: session.permissionPreset,
         sessionId: session.id,
         attachments: session.attachments ?? [],
+        fileVersions: session.fileVersions,
         signal,
       });
 

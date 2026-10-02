@@ -483,8 +483,8 @@ test('runtime automatically compacts older thread context into a summary', async
 
   assert.equal(result.status, 'completed');
   assert.ok(session.contextCompression);
-  assert.equal(session.contextCompression.compressedMessageCount, 21);
-  assert.equal(session.contextCompression.keptMessageCount, 20);
+  assert.equal(session.contextCompression.compressedMessageCount, 20);
+  assert.equal(session.contextCompression.keptMessageCount, 21);
   assert.ok(seenMessages.length < session.messages.length);
   assert.equal(seenMessages[0].role, 'system');
   assert.match(seenMessages[0].content, /Compressed conversation memory/);
@@ -987,6 +987,94 @@ test('plan mode blocks workspace-changing tool calls and keeps the agent in anal
   assert.equal(session.toolEvents[0]?.status, 'blocked');
   assert.match(session.toolEvents[0]?.resultPreview ?? '', /Plan mode is analysis-first/i);
   assert.match(session.messages.at(-1)?.content ?? '', /recommended implementation plan/i);
+});
+
+test('runtime includes workspace instructions and discovers skills for every provider', async (t) => {
+  let request;
+  const provider = {
+    async getCapabilities() { return { nativeTools: true }; },
+    async runTurn(value) { request = value; return { message: 'done', toolCalls: [] }; },
+  };
+  const session = await createSession(provider);
+  t.after(() => fs.rm(session.workspaceRoot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(session.workspaceRoot, 'AGENTS.md'), 'Keep changes minimal.');
+  await fs.mkdir(path.join(session.workspaceRoot, '.claude/skills/check'), { recursive: true });
+  await fs.writeFile(path.join(session.workspaceRoot, '.claude/skills/check/SKILL.md'), '---\nname: check\ndescription: Verify changes\n---\n');
+  await new AgentRuntime({ provider }).runUserTurn(session, 'check the code');
+  assert.match(request.systemPrompt, /Keep changes minimal/);
+  assert.match(request.systemPrompt, /Verify changes/);
+  assert.ok(request.knownPaths.includes('.claude/skills/check/SKILL.md'));
+});
+
+test('context budget compacts large short histories without altering stored messages', async (t) => {
+  let request;
+  const provider = {
+    async getCapabilities() { return { nativeTools: true }; },
+    async runTurn(value) { request = value; return { message: 'done', toolCalls: [] }; },
+  };
+  const session = await createSession(provider);
+  t.after(() => fs.rm(session.workspaceRoot, { recursive: true, force: true }));
+  session.modelSettings = { contextLength: 8192 };
+  session.messages = [
+    { role: 'user', content: 'Old goal' },
+    { role: 'assistant', content: 'x'.repeat(50000), toolCalls: [{ name: 'fs_read', arguments: { path: 'old.txt' } }] },
+    { role: 'tool', toolName: 'fs_read', content: 'y'.repeat(50000) },
+  ];
+  await new AgentRuntime({ provider }).runUserTurn(session, 'New goal');
+  assert.ok(session.contextCompression.compressedMessageCount > 0);
+  assert.equal(request.messages.at(-1).content, 'New goal');
+  assert.equal(session.messages[1].content.length, 50000);
+  assert.equal(session.messages[2].content.length, 50000);
+  assert.ok(JSON.stringify(request.messages).length < 10000);
+  assert.notEqual(request.messages[1]?.role, 'tool');
+});
+
+test('large current tool output is bounded but its native call remains paired', async (t) => {
+  let request;
+  const provider = {
+    turns: 0,
+    async getCapabilities() { return { nativeTools: true }; },
+    async runTurn(value) {
+      this.turns += 1;
+      request = value;
+      return this.turns === 1
+        ? { message: '', toolCalls: [{ name: 'fs_read', arguments: { path: 'large.txt' } }] }
+        : { message: 'done', toolCalls: [] };
+    },
+  };
+  const session = await createSession(provider);
+  t.after(() => fs.rm(session.workspaceRoot, { recursive: true, force: true }));
+  session.modelSettings = { contextLength: 4096 };
+  await fs.writeFile(path.join(session.workspaceRoot, 'large.txt'), 'text\n'.repeat(5000));
+  await new AgentRuntime({ provider }).runUserTurn(session, 'Read large.txt');
+  const toolIndex = request.messages.findIndex((message) => message.role === 'tool');
+  assert.ok(toolIndex > 0);
+  assert.ok(request.messages[toolIndex - 1].toolCalls.length);
+  assert.match(request.messages[toolIndex].content, /shortened for context/);
+  assert.ok(session.messages.find((message) => message.role === 'tool').content.length > request.messages[toolIndex].content.length);
+});
+
+test('runtime restores edit versions from saved events and rejects concurrent changes', async (t) => {
+  const provider = {
+    turns: 0,
+    async getCapabilities() { return { nativeTools: true }; },
+    async runTurn() {
+      this.turns += 1;
+      return this.turns === 1
+        ? { message: '', toolCalls: [{ name: 'fs_write', arguments: { path: 'notes.txt', content: 'agent change' } }] }
+        : { message: 'done', toolCalls: [] };
+    },
+  };
+  const session = await createSession(provider);
+  t.after(() => fs.rm(session.workspaceRoot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(session.workspaceRoot, 'notes.txt'), 'original');
+  const previousResult = await session.toolRegistry.execute('fs_read', { path: 'notes.txt' }, { workspaceRoot: session.workspaceRoot, permissionPreset: session.permissionPreset });
+  session.toolEvents.push({ id: 'previous', toolName: 'fs_read', status: 'completed', result: previousResult });
+  await fs.writeFile(path.join(session.workspaceRoot, 'notes.txt'), 'user change');
+  await new AgentRuntime({ provider }).runUserTurn(session, 'update notes');
+  assert.equal(session.toolEvents.at(-1).status, 'failed');
+  assert.match(session.toolEvents.at(-1).resultPreview, /changed since/);
+  assert.equal(await fs.readFile(path.join(session.workspaceRoot, 'notes.txt'), 'utf8'), 'user change');
 });
 
 test('plan mode hides and blocks mutating MCP tools before approval', async () => {

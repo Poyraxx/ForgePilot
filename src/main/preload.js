@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('cokgizlicoder', {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+  openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   chooseWorkspace: (defaultPath) => ipcRenderer.invoke('app:choose-workspace', defaultPath),
   refreshModels: (payload) => ipcRenderer.invoke('app:refresh-models', payload),
   exportProgressReport: (payload) => ipcRenderer.invoke('app:export-progress-report', payload),
