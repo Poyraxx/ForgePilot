@@ -15,6 +15,7 @@ function createContext() {
 test('web_fetch reports a helpful 403 message', async () => {
   const registry = new ToolRegistry(
     createWebTools({
+      browserFetchImpl: null,
       fetchImpl: async () => ({
         ok: false,
         status: 403,
