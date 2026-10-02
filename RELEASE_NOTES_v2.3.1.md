@@ -1,3 +1,5 @@
+## What's New in v2.3.1
+
 ForgePilot v2.3.1 includes the v2.3 improvements and fixes reuse of web search results across turns.
 
 - The desktop UI bundles its dependencies locally and can open offline.
