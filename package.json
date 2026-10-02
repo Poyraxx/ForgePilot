@@ -1,6 +1,6 @@
 {
   "name": "forgepilot",
-  "version": "0.1.0",
+  "version": "2.3.0",
   "description": "Desktop agent workspace for local and hosted LLMs with tool calling, MCP, and document support.",
   "productName": "ForgePilot",
   "author": {
@@ -11,21 +11,28 @@
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "node scripts/start-electron.mjs",
-    "dev": "node scripts/start-electron.mjs",
+    "start": "npm run build:renderer && node scripts/start-electron.mjs",
+    "dev": "npm run build:renderer && node scripts/start-electron.mjs",
+    "build:renderer": "node scripts/build-renderer.mjs",
     "test": "node --test",
     "test:acceptance": "node --test test/ollama-acceptance.test.js",
-    "pack": "electron-builder --dir",
-    "build:win": "electron-builder --win portable --publish never",
-    "build:mac": "electron-builder --mac dmg zip --x64 --arm64 --publish never",
-    "build:linux": "electron-builder --linux AppImage deb --x64 --publish never"
+    "pack": "npm run build:renderer && electron-builder --dir",
+    "build:win": "npm run build:renderer && electron-builder --win portable --publish never",
+    "build:mac": "npm run build:renderer && electron-builder --mac dmg zip --x64 --arm64 --publish never",
+    "build:linux": "npm run build:renderer && electron-builder --linux AppImage deb --x64 --publish never"
   },
   "engines": {
     "node": ">=24"
   },
   "devDependencies": {
-    "electron": "^35.5.1",
-    "electron-builder": "^26.0.12"
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.12"
+  },
+  "dependencies": {
+    "htm": "3.1.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   },
   "build": {
     "appId": "com.forgepilot.desktop",

@@ -1,6 +1,6 @@
-import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'https://esm.sh/react@18.3.1';
-import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
-import htm from 'https://esm.sh/htm@3.1.1';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import htm from 'htm';
 import { AgentMode } from '../core/contracts.js';
 import { parseAgentEnvelope } from '../core/envelope.js';
 import {
@@ -1355,7 +1355,12 @@ function buildMessageSourceCards(session) {
     const sources = [];
     const seenUrls = new Set();
 
-    for (const event of turnEvents) {
+    const orderedEvents = [
+      ...turnEvents.filter((event) => event.toolName !== 'web_search'),
+      ...turnEvents.filter((event) => event.toolName === 'web_search'),
+    ];
+
+    for (const event of orderedEvents) {
       if (event.toolName === 'web_search') {
         for (const result of event.result?.results ?? []) {
           const url = result?.url ? String(result.url) : '';
@@ -2388,6 +2393,7 @@ function App() {
   });
 
   const messagesRef = useRef(null);
+  const stickToBottomRef = useRef(true);
   const composerRef = useRef(null);
   const attachmentInputRef = useRef(null);
   const conversationSearchInputRef = useRef(null);
@@ -2603,10 +2609,20 @@ function App() {
   }, [activeThreadId, session?.id]);
 
   useEffect(() => {
-    if (messagesRef.current) {
+    if (messagesRef.current && stickToBottomRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [deferredMessages, session?.pendingApproval]);
+
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    const frame = globalThis.requestAnimationFrame(() => {
+      if (messagesRef.current) {
+        messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+      }
+    });
+    return () => globalThis.cancelAnimationFrame(frame);
+  }, [activeThreadId]);
 
   useEffect(() => {
     const pendingEventId = session?.pendingApproval?.eventId ?? null;
@@ -3684,9 +3700,6 @@ function App() {
       case 'export-progress-report':
         await handleExportProgressReport();
         return;
-      case 'window-close':
-        await handleWindowAction('close');
-        return;
       default:
         setActiveTopMenu(null);
     }
@@ -4291,7 +4304,10 @@ function App() {
             `
           : null}
 
-        <section className="thread-body" ref=${messagesRef}>
+        <section className="thread-body" ref=${messagesRef} onScroll=${(event) => {
+          const target = event.currentTarget;
+          stickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 96;
+        }}>
           ${error ? html`<div className="status-banner error">${error}</div>` : null}
 
           ${deferredMessages.length > 0

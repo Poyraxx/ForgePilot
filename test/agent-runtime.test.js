@@ -988,6 +988,47 @@ test('plan mode blocks workspace-changing tool calls and keeps the agent in anal
   assert.match(session.messages.at(-1)?.content ?? '', /recommended implementation plan/i);
 });
 
+test('plan mode hides and blocks mutating MCP tools before approval', async () => {
+  let executed = false;
+  const provider = {
+    turns: 0,
+    async getCapabilities() {
+      return { nativeTools: true, structuredOutput: true, streaming: true };
+    },
+    async runTurn({ tools }) {
+      this.turns += 1;
+      assert.equal(tools.some((tool) => tool.name === 'mcp.test.write'), false);
+      if (this.turns === 1) {
+        return {
+          message: '',
+          toolCalls: [{ name: 'mcp.test.write', arguments: {} }],
+        };
+      }
+      return { message: 'Plan ready.', toolCalls: [] };
+    },
+  };
+  const session = await createSession(provider, PermissionPreset.ASK, AgentMode.PLAN);
+  session.toolRegistry.register({
+    name: 'mcp.test.write',
+    description: 'Write',
+    inputSchema: { type: 'object' },
+    mutatesWorkspace: true,
+    requiresApproval: true,
+    riskLevel: 'medium',
+    source: 'mcp:test',
+    async handler() {
+      executed = true;
+      return {};
+    },
+  });
+
+  const result = await new AgentRuntime({ provider }).runUserTurn(session, 'plan');
+  assert.equal(result.status, 'completed');
+  assert.equal(executed, false);
+  assert.equal(session.pendingApproval, null);
+  assert.equal(session.toolEvents[0].status, 'blocked');
+});
+
 test('research mode requires two fetched sources before finalizing a web research answer', async () => {
   const provider = {
     turns: 0,
@@ -1033,6 +1074,26 @@ test('research mode requires two fetched sources before finalizing a web researc
       }
 
       if (this.turns === 4) {
+        return {
+          message:
+            '<agent-response>{"mode":"tool","calls":[{"name":"browser_fetch","arguments":{"url":"https://www.example.com/source-1"}}]}</agent-response>',
+          thinking: '',
+          envelope: {
+            mode: 'tool',
+            calls: [{ name: 'browser_fetch', arguments: { url: 'https://www.example.com/source-1' } }],
+          },
+        };
+      }
+
+      if (this.turns === 5) {
+        return {
+          message: '<agent-response>{"mode":"final","message":"This is still one source."}</agent-response>',
+          thinking: '',
+          envelope: { mode: 'final', message: 'This is still one source.' },
+        };
+      }
+
+      if (this.turns === 6) {
         return {
           message:
             '<agent-response>{"mode":"tool","calls":[{"name":"web_fetch","arguments":{"url":"https://www.example.com/source-2"}}]}</agent-response>',
@@ -1095,6 +1156,15 @@ test('research mode requires two fetched sources before finalizing a web researc
       content: `verified content from ${args.url}`,
     }),
   });
+  const browserFetchDefinition = session.toolRegistry.get('browser_fetch');
+  session.toolRegistry.register({
+    ...browserFetchDefinition,
+    handler: async (_context, args) => ({
+      url: args.url,
+      title: 'Source one',
+      content: 'The same source in a browser',
+    }),
+  });
 
   const runtime = new AgentRuntime({ provider });
   const result = await runtime.runUserTurn(session, 'research this topic carefully');
@@ -1107,7 +1177,7 @@ test('research mode requires two fetched sources before finalizing a web researc
 
   assert.equal(result.status, 'completed');
   assert.equal(completedFetches.length, 2);
-  assert.equal(evidenceGuardEvents.length, 1);
+  assert.equal(evidenceGuardEvents.length, 2);
   assert.match(
     evidenceGuardEvents[0]?.resultPreview ?? '',
     /Gather at least 2 fetched sources/i

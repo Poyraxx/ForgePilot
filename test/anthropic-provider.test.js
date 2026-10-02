@@ -120,3 +120,63 @@ test('anthropic provider embeds emulation protocol when native tools are disable
     globalThis.fetch = originalFetch;
   }
 });
+
+test('anthropic provider streams text and tool input', async () => {
+  const originalFetch = globalThis.fetch;
+  const chunks = [];
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(JSON.parse(init.body).stream, true);
+    const events = [
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking"}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"fs_read","input":{}}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"README.md\\"}"}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ];
+    return new Response(new ReadableStream({
+      start(controller) {
+        const bytes = new TextEncoder().encode(events.join(''));
+        controller.enqueue(bytes.slice(0, 53));
+        controller.enqueue(bytes.slice(53));
+        controller.close();
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+  };
+
+  try {
+    const provider = new AnthropicProvider({ apiKey: 'sk-test' });
+    const result = await provider.runStreamingTurn({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'read' }],
+      tools: [{ name: 'fs_read', description: 'Read', inputSchema: { type: 'object' } }],
+      useNativeTools: true,
+      onChunk: (chunk) => chunks.push(chunk.content),
+    });
+
+    assert.deepEqual(chunks, ['Looking']);
+    assert.equal(result.message, 'Looking');
+    assert.deepEqual(result.toolCalls, [{ id: 'tool_1', name: 'fs_read', arguments: { path: 'README.md' } }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('anthropic provider accepts a JSON reply to a stream request', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    content: [{ type: 'text', text: 'Local reply' }],
+  });
+
+  try {
+    const provider = new AnthropicProvider();
+    const result = await provider.runStreamingTurn({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [],
+      useNativeTools: true,
+    });
+    assert.equal(result.message, 'Local reply');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

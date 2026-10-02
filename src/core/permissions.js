@@ -1,4 +1,4 @@
-import { PermissionPreset, RiskLevel } from './contracts.js';
+import { AgentMode, PermissionPreset, RiskLevel } from './contracts.js';
 
 export class PermissionError extends Error {
   constructor(message) {
@@ -33,6 +33,16 @@ export function canUseTool(permissionPreset, toolDefinition) {
   }
 
   return true;
+}
+
+export function canUseToolInAgentMode(agentMode, toolDefinition) {
+  if (agentMode !== AgentMode.PLAN) {
+    return true;
+  }
+
+  return !toolDefinition?.mutatesWorkspace &&
+    !toolDefinition?.requiresApproval &&
+    toolDefinition?.riskLevel !== RiskLevel.HIGH;
 }
 
 export function requiresApprovalForTool(permissionPreset, toolDefinition) {

@@ -1747,6 +1747,8 @@ body[data-theme='paper'] .inspector-card pre {
   padding: 12px;
   display: grid;
   gap: 10px;
+  max-height: min(32vh, 260px);
+  overflow: hidden;
 }
 
 .live-activity-header {
@@ -1768,7 +1770,7 @@ body[data-theme='paper'] .inspector-card pre {
 .live-activity-list {
   display: grid;
   gap: 6px;
-  max-height: min(38vh, 360px);
+  max-height: 190px;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;

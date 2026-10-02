@@ -1,10 +1,11 @@
-import { ProviderName } from '../contracts.js';
+import { ProviderName, safeJsonParse } from '../contracts.js';
 import {
   buildEmulationPromptBundle,
   buildEnvelopeRepairPrompt,
   parseEmulatedEnvelopeWithRepair,
 } from './emulation.js';
 import { throwIfAborted } from '../abort.js';
+import { readSseEvents } from './sse.js';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const DEFAULT_API_VERSION = '2023-06-01';
@@ -397,10 +398,151 @@ export class AnthropicProvider {
   }
 
   async runStreamingTurn(payload) {
-    return this.runTurn(payload);
+    const {
+      model,
+      messages,
+      tools = [],
+      useNativeTools,
+      workspaceRoot = '',
+      knownPaths = [],
+      systemPrompt = '',
+      runtimeOptions = {},
+      signal,
+      onChunk,
+    } = payload;
+    throwIfAborted(signal);
+    const emulation = useNativeTools
+      ? null
+      : buildEmulationPromptBundle(messages, tools, workspaceRoot, systemPrompt, knownPaths);
+    const normalized = toAnthropicMessages(
+      emulation?.messages ?? messages,
+      emulation?.systemPrompt ?? systemPrompt
+    );
+    const response = await this.#request('/v1/messages', {
+      body: {
+        model,
+        max_tokens: this.maxTokens,
+        temperature: Number.isFinite(runtimeOptions?.temperature)
+          ? runtimeOptions.temperature
+          : undefined,
+        system: normalized.system,
+        messages: normalized.messages,
+        tools: useNativeTools ? tools.map(toAnthropicTool) : undefined,
+        stream: true,
+      },
+      signal,
+      streamResponse: true,
+    }, 'messages request');
+
+    const blocks = new Map();
+    let content = '';
+    let thinking = '';
+    if (response.headers?.get('content-type')?.includes('application/json')) {
+      const result = await response.json();
+      for (const [index, block] of (result.content ?? []).entries()) {
+        blocks.set(index, block);
+      }
+      content = extractAnthropicText(result.content ?? []);
+      if (content) {
+        onChunk?.({ content, thinking });
+      }
+    } else {
+      for await (const event of readSseEvents(response)) {
+        throwIfAborted(signal);
+        const data = safeJsonParse(event.data);
+        if (event.event === 'error' || data?.type === 'error') {
+          throw new Error(data?.error?.message ?? 'Anthropic stream failed.');
+        }
+
+        if (data?.type === 'content_block_start') {
+          const block = data.content_block ?? {};
+          blocks.set(data.index, block.type === 'tool_use'
+            ? { ...block, inputJson: '' }
+            : { ...block, text: block.text ?? '' });
+          if (block.type === 'text' && block.text) {
+            content += block.text;
+            onChunk?.({ content, thinking });
+          }
+        }
+
+        if (data?.type !== 'content_block_delta') {
+          continue;
+        }
+
+        const block = blocks.get(data.index);
+        const delta = data.delta ?? {};
+        if (delta.type === 'text_delta') {
+          const text = delta.text ?? '';
+          content += text;
+          if (block) {
+            block.text += text;
+          }
+          onChunk?.({ content, thinking });
+        } else if (delta.type === 'thinking_delta') {
+          thinking += delta.thinking ?? '';
+          onChunk?.({ content, thinking });
+        } else if (delta.type === 'input_json_delta' && block) {
+          block.inputJson += delta.partial_json ?? '';
+        }
+      }
+    }
+
+    const contentBlocks = [...blocks.entries()].sort(([a], [b]) => a - b).map(([, block]) =>
+      block.type === 'tool_use'
+        ? { ...block, input: safeJsonParse(block.inputJson, block.input ?? {}) }
+        : block
+    );
+    if (useNativeTools) {
+      return {
+        provider: this.name,
+        nativeTools: true,
+        message: extractAnthropicText(contentBlocks),
+        thinking,
+        toolCalls: extractAnthropicToolCalls(contentBlocks),
+        raw: { streamed: true },
+      };
+    }
+
+    const parsed = await parseEmulatedEnvelopeWithRepair({
+      rawMessage: content,
+      fallbackThinking: thinking,
+      repair: async (parseFailure) => {
+        const repairMessages = toAnthropicMessages([
+          ...emulation.messages,
+          { role: 'assistant', content },
+          { role: 'user', content: buildEnvelopeRepairPrompt(parseFailure) },
+        ], emulation.systemPrompt);
+        const repairResponse = await this.#request('/v1/messages', {
+          body: {
+            model,
+            max_tokens: this.maxTokens,
+            temperature: Number.isFinite(runtimeOptions?.temperature)
+              ? runtimeOptions.temperature
+              : undefined,
+            system: repairMessages.system,
+            messages: repairMessages.messages,
+          },
+          signal,
+        }, 'envelope repair');
+        return {
+          message: extractAnthropicText(repairResponse.content),
+          thinking,
+          raw: repairResponse,
+        };
+      },
+    });
+
+    return {
+      provider: this.name,
+      nativeTools: false,
+      message: parsed.message,
+      thinking: parsed.thinking,
+      envelope: parsed.envelope,
+      raw: parsed.raw ?? { streamed: true },
+    };
   }
 
-  async #request(endpoint, { method = 'POST', body, signal } = {}, action = 'request') {
+  async #request(endpoint, { method = 'POST', body, signal, streamResponse = false } = {}, action = 'request') {
     let response;
 
     try {
@@ -420,6 +562,6 @@ export class AnthropicProvider {
       throw new Error(message);
     }
 
-    return response.json();
+    return streamResponse ? response : response.json();
   }
 }

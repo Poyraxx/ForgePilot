@@ -17,7 +17,7 @@ import {
   normalizeProviderConfigs,
   normalizeProviderId,
 } from '../core/providers/registry.js';
-import { listPermissionPresets } from '../core/permissions.js';
+import { canUseToolInAgentMode, listPermissionPresets } from '../core/permissions.js';
 import { relativizeWorkspacePath, resolveWorkspacePath } from '../core/path-guard.js';
 import { ToolRegistry } from '../core/tool-registry.js';
 import { createBuiltInTools } from '../core/tools/index.js';
@@ -36,13 +36,6 @@ const DEFAULT_MODEL_SETTINGS = Object.freeze({
 const STATE_FILE_VERSION = 3;
 const ACTIVE_TOOL_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const ATTACHMENT_DIRECTORY = path.join('.cokgizlicoder', 'attachments');
-const PLAN_MODE_VISIBLE_TOOL_BLOCKLIST = new Set([
-  'fs_write',
-  'fs_patch',
-  'fs_mkdir',
-  'fs_delete',
-  'run_command',
-]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -139,7 +132,7 @@ function filterToolDefinitionsForAgentMode(toolDefinitions = [], agentMode) {
     return toolDefinitions;
   }
 
-  return toolDefinitions.filter((tool) => !PLAN_MODE_VISIBLE_TOOL_BLOCKLIST.has(tool?.name));
+  return toolDefinitions.filter((tool) => canUseToolInAgentMode(agentMode, tool));
 }
 
 function normalizeMcpArgs(value) {

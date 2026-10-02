@@ -5,6 +5,7 @@ import {
   parseEmulatedEnvelopeWithRepair,
 } from './emulation.js';
 import { throwIfAborted } from '../abort.js';
+import { readSseEvents } from './sse.js';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
@@ -367,10 +368,131 @@ export class OpenAICompatibleProvider {
   }
 
   async runStreamingTurn(payload) {
-    return this.runTurn(payload);
+    const {
+      model,
+      messages,
+      tools = [],
+      useNativeTools,
+      workspaceRoot = '',
+      knownPaths = [],
+      systemPrompt = '',
+      runtimeOptions = {},
+      signal,
+      onChunk,
+    } = payload;
+    throwIfAborted(signal);
+    const emulation = useNativeTools
+      ? null
+      : buildEmulationPromptBundle(messages, tools, workspaceRoot, systemPrompt, knownPaths);
+    const response = await this.#request('/chat/completions', {
+      body: {
+        model,
+        messages: toOpenAICompatibleMessages(withSystemPrompt(
+          emulation?.messages ?? messages,
+          emulation?.systemPrompt ?? systemPrompt
+        )),
+        tools: useNativeTools ? tools.map(toOpenAITool) : undefined,
+        tool_choice: useNativeTools && tools.length > 0 ? 'auto' : undefined,
+        stream: true,
+        ...buildBodyOptions(runtimeOptions),
+      },
+      signal,
+      streamResponse: true,
+    }, 'chat completion');
+
+    let content = '';
+    let thinking = '';
+    const calls = new Map();
+    if (response.headers?.get('content-type')?.includes('application/json')) {
+      const message = extractChoiceMessage(await response.json());
+      content = stringifyContent(message.content);
+      for (const [index, call] of (message.tool_calls ?? []).entries()) {
+        calls.set(index, call);
+      }
+      if (content) {
+        onChunk?.({ content, thinking });
+      }
+    } else {
+      for await (const event of readSseEvents(response)) {
+        throwIfAborted(signal);
+        if (event.data === '[DONE]') {
+          break;
+        }
+
+        const data = safeJsonParse(event.data);
+        if (data?.error) {
+          throw new Error(data.error.message ?? JSON.stringify(data.error));
+        }
+
+        const delta = data?.choices?.[0]?.delta;
+        if (!delta) {
+          continue;
+        }
+
+        content += typeof delta.content === 'string' ? delta.content : stringifyContent(delta.content);
+        thinking += delta.reasoning_content ?? delta.reasoning ?? '';
+        for (const call of delta.tool_calls ?? []) {
+          const index = Number.isInteger(call.index) ? call.index : calls.size;
+          const current = calls.get(index) ?? { id: '', function: { name: '', arguments: '' } };
+          current.id = call.id ?? current.id;
+          current.function.name += call.function?.name ?? '';
+          current.function.arguments += call.function?.arguments ?? '';
+          calls.set(index, current);
+        }
+
+        if (delta.content || delta.reasoning_content || delta.reasoning) {
+          onChunk?.({ content, thinking });
+        }
+      }
+    }
+
+    if (useNativeTools) {
+      return {
+        provider: this.name,
+        nativeTools: true,
+        message: content,
+        thinking,
+        toolCalls: fromOpenAIToolCalls([...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)),
+        raw: { streamed: true },
+      };
+    }
+
+    const parsed = await parseEmulatedEnvelopeWithRepair({
+      rawMessage: content,
+      fallbackThinking: thinking,
+      repair: async (parseFailure) => {
+        const repairResponse = await this.#request('/chat/completions', {
+          body: {
+            model,
+            messages: toOpenAICompatibleMessages(withSystemPrompt([
+              ...emulation.messages,
+              { role: 'assistant', content },
+              { role: 'user', content: buildEnvelopeRepairPrompt(parseFailure) },
+            ], emulation.systemPrompt)),
+            stream: false,
+            ...buildBodyOptions(runtimeOptions),
+          },
+          signal,
+        }, 'envelope repair');
+        return {
+          message: stringifyContent(extractChoiceMessage(repairResponse).content),
+          thinking,
+          raw: repairResponse,
+        };
+      },
+    });
+
+    return {
+      provider: this.name,
+      nativeTools: false,
+      message: parsed.message,
+      thinking: parsed.thinking,
+      envelope: parsed.envelope,
+      raw: parsed.raw ?? { streamed: true },
+    };
   }
 
-  async #request(endpoint, { method = 'POST', body, signal } = {}, action = 'request') {
+  async #request(endpoint, { method = 'POST', body, signal, streamResponse = false } = {}, action = 'request') {
     let response;
 
     try {
@@ -390,6 +512,6 @@ export class OpenAICompatibleProvider {
       throw new Error(message);
     }
 
-    return response.json();
+    return streamResponse ? response : response.json();
   }
 }

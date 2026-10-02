@@ -1,0 +1,12 @@
+node_modules/
+release/
+dist/
+out/
+logs/
+.cokgizlicoder/
+.env
+.env.*
+!.env.example
+*.log
+src/renderer/bundle.js
+.playwright-cli/

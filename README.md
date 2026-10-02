@@ -4,6 +4,15 @@ ForgePilot is an Electron desktop agent workspace for local and hosted LLMs. It 
 
 The core design goal is simple: even if a model does not support native tool calling, the app can still run tools through an emulated agent envelope and continue the same workflow.
 
+## What's New in v2.3
+
+- Bundled the renderer locally so the desktop UI opens without loading React from an external CDN.
+- Added live streaming for OpenAI-compatible and Anthropic providers, including streamed tool calls and JSON fallback responses from local servers.
+- Kept Plan mode read-only for MCP and plugin tools as well as built-in tools.
+- Counted distinct fetched URLs as research sources, so opening the same page twice does not satisfy the multi-source check.
+- Kept the chat at the user's reading position during updates and limited the height of live activity.
+- Updated Electron and packaging dependencies, with zero findings in the current npm audit.
+
 ## What's New in v2.1
 
 - Added a scalable localization layer with a 5-language core:

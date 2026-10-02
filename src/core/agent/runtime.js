@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { AgentEnvelopeMode, AgentMode } from '../contracts.js';
-import { requiresApprovalForTool } from '../permissions.js';
+import { canUseToolInAgentMode, requiresApprovalForTool } from '../permissions.js';
 import { isAbortError, throwIfAborted } from '../abort.js';
 import { resolveWorkspacePath } from '../path-guard.js';
 
@@ -17,13 +17,6 @@ const EXPLORATORY_TOOL_NAMES = new Set([
   'web_search',
   'web_fetch',
   'browser_fetch',
-]);
-const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
-  'fs_write',
-  'fs_patch',
-  'fs_mkdir',
-  'fs_delete',
-  'run_command',
 ]);
 
 function nowIso() {
@@ -187,7 +180,7 @@ function filterVisibleToolsForAgentMode(toolDefinitions = [], agentMode) {
     return toolDefinitions;
   }
 
-  return toolDefinitions.filter((tool) => !PLAN_MODE_BLOCKED_TOOL_NAMES.has(tool?.name));
+  return toolDefinitions.filter((tool) => canUseToolInAgentMode(agentMode, tool));
 }
 
 function stableStringify(value) {
@@ -917,14 +910,6 @@ export class AgentRuntime {
           continue;
         }
 
-        session.messages.push({
-          id: randomUUID(),
-          role: 'assistant',
-          content: turn.envelope.message,
-          thinking: turn.thinking ?? '',
-          createdAt: nowIso(),
-        });
-
         if (turn.envelope.mode === AgentEnvelopeMode.FINAL) {
           if (this.#recordMissingWebEvidenceWarning(session, onProgress)) {
             countedIterations += 1;
@@ -936,6 +921,14 @@ export class AgentRuntime {
             continue;
           }
         }
+
+        session.messages.push({
+          id: randomUUID(),
+          role: 'assistant',
+          content: turn.envelope.message,
+          thinking: turn.thinking ?? '',
+          createdAt: nowIso(),
+        });
 
         this.#clearLoopTracker(session);
         this.#notifyProgress(session, onProgress, {
@@ -1052,10 +1045,11 @@ export class AgentRuntime {
       return null;
     }
 
-    const successfulFetchCount = currentTurnEvents.filter(
+    const successfulFetchUrls = new Set(currentTurnEvents.filter(
       (event) =>
         ['web_fetch', 'browser_fetch'].includes(event.toolName) && event.status === 'completed'
-    ).length;
+    ).map((event) => normalizeWebUrl(event.result?.url ?? event.arguments?.url)).filter(Boolean));
+    const successfulFetchCount = successfulFetchUrls.size;
     const requiredFetchCount = getRequiredFetchedSourceCount(session);
     if (successfulFetchCount >= requiredFetchCount) {
       return null;
@@ -1291,6 +1285,23 @@ export class AgentRuntime {
         continue;
       }
 
+      const modeWarning = this.#buildModeGuardWarning(session, resolvedCall);
+      if (modeWarning) {
+        event.status = 'blocked';
+        event.completedAt = nowIso();
+        event.result = { warning: modeWarning, blocked: true };
+        event.resultPreview = modeWarning;
+        session.messages.push({
+          id: randomUUID(),
+          role: 'tool',
+          toolName: call.name,
+          content: JSON.stringify(event.result),
+          createdAt: nowIso(),
+        });
+        this.#notifyProgress(session, onProgress, { phase: 'tool_blocked', eventId: event.id });
+        continue;
+      }
+
       if (requiresApprovalForTool(session.permissionPreset, toolDefinition)) {
         event.status = 'pending_approval';
         session.pendingApproval = {
@@ -1306,7 +1317,6 @@ export class AgentRuntime {
       }
 
       const warning =
-        this.#buildModeGuardWarning(session, resolvedCall) ??
         (['fs_write', 'fs_patch'].includes(call.name)
           ? this.#buildMissingWebEvidenceWarning(session)
           : null) ??
@@ -1510,7 +1520,7 @@ export class AgentRuntime {
       return null;
     }
 
-    if (!PLAN_MODE_BLOCKED_TOOL_NAMES.has(call.name)) {
+    if (canUseToolInAgentMode(session.agentMode, session.toolRegistry.get(call.name))) {
       return null;
     }
 

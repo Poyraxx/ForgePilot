@@ -122,3 +122,64 @@ test('openai-compatible provider embeds emulation protocol when native tools are
     globalThis.fetch = originalFetch;
   }
 });
+
+test('openai-compatible provider streams text and joins tool arguments', async () => {
+  const originalFetch = globalThis.fetch;
+  const chunks = [];
+  const encoder = new TextEncoder();
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(JSON.parse(init.body).stream, true);
+    const events = [
+      'data: {"choices":[{"delta":{"content":"Reading "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"file","tool_calls":[{"index":0,"id":"call_1","function":{"name":"fs_read","arguments":"{\\"path\\":\\""}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"README.md\\"}"}}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    return new Response(new ReadableStream({
+      start(controller) {
+        const bytes = encoder.encode(events.join(''));
+        controller.enqueue(bytes.slice(0, 37));
+        controller.enqueue(bytes.slice(37, 119));
+        controller.enqueue(bytes.slice(119));
+        controller.close();
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+  };
+
+  try {
+    const provider = new OpenAICompatibleProvider({ apiKey: 'sk-test' });
+    const result = await provider.runStreamingTurn({
+      model: 'gpt-test',
+      messages: [{ role: 'user', content: 'read' }],
+      tools: [{ name: 'fs_read', description: 'Read', inputSchema: { type: 'object' } }],
+      useNativeTools: true,
+      onChunk: (chunk) => chunks.push(chunk.content),
+    });
+
+    assert.deepEqual(chunks, ['Reading ', 'Reading file']);
+    assert.equal(result.message, 'Reading file');
+    assert.deepEqual(result.toolCalls, [{ id: 'call_1', name: 'fs_read', arguments: { path: 'README.md' } }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('openai-compatible provider accepts a JSON reply to a stream request', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    choices: [{ message: { content: 'Local reply', tool_calls: [] } }],
+  });
+
+  try {
+    const provider = new OpenAICompatibleProvider();
+    const result = await provider.runStreamingTurn({
+      model: 'local-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [],
+      useNativeTools: true,
+    });
+    assert.equal(result.message, 'Local reply');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
