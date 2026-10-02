@@ -1456,7 +1456,7 @@ export class AgentRuntime {
       if (!session.fileVersions) {
         session.fileVersions = new Map();
         for (const previousEvent of session.toolEvents) {
-          if (previousEvent.status !== 'completed' || !previousEvent.result?.version || !previousEvent.result?.path) continue;
+          if (previousEvent.status !== 'completed' || !['fs_read', 'fs_write', 'fs_patch'].includes(previousEvent.toolName) || !/^[a-f\d]{64}$/i.test(previousEvent.result?.version ?? '') || !previousEvent.result?.path) continue;
           try {
             session.fileVersions.set(fileVersionKey(resolveWorkspacePath(session.workspaceRoot, previousEvent.result.path)), previousEvent.result.version);
           } catch {
