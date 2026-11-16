@@ -4,9 +4,12 @@ name: AppImage smoke test
 # 800x600, IceWM, no network) and checks that the window is not blank.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - appimage-catalog-fixes
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - src/main/**
+      - .github/workflows/appimage-smoke.yml
 
 jobs:
   smoke:
