@@ -1,0 +1,80 @@
+name: AppImage smoke test
+
+# Starts the Linux AppImage the way the AppImage catalog test does (Xvfb at
+# 800x600, IceWM, no network) and checks that the window is not blank.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - appimage-catalog-fixes
+
+jobs:
+  smoke:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build AppImage
+        run: npm run build:renderer && npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Install X11 test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb icewm imagemagick x11-utils xdotool firejail
+
+      - name: Run AppImage like the catalog test
+        run: |
+          set -x
+          APP=$(ls release/*.AppImage)
+          chmod +x "$APP"
+          ls -la release
+          sudo sysctl kernel.unprivileged_userns_clone=1 || true
+          Xvfb :99 -screen 0 800x600x24 >/dev/null 2>&1 &
+          export DISPLAY=:99
+          sleep 2
+          mkdir -p smoke
+
+          run_case() {
+            NAME=$1; shift
+            "$@" > "smoke/$NAME.log" 2>&1 &
+            PID=$!
+            sleep 25
+            icewm >/dev/null 2>&1 &
+            WM=$!
+            sleep 3
+            WID=$(xdotool search --onlyvisible --name 'ForgePilot' | head -n 1 || true)
+            [ -n "$WID" ] && xdotool windowmove "$WID" 0 0 && xdotool windowsize "$WID" 796 570 || true
+            sleep 3
+            xwininfo -tree -root | grep '": ("' > "smoke/$NAME.windows.txt" || true
+            import -window root "smoke/$NAME.png"
+            COLORS=$(convert "smoke/$NAME.png" -format '%k' info:)
+            echo "$NAME: unique colors = $COLORS" | tee -a smoke/summary.txt
+            kill $PID $WM 2>/dev/null || true
+            sleep 3
+            pkill -f "$APP" || true
+            pkill -f '/tmp/.mount_' || true
+            sleep 2
+          }
+
+          run_case firejail firejail --quiet --noprofile --net=none --appimage "./$APP"
+          run_case plain "./$APP"
+
+          for f in smoke/*.log; do echo "===== $f"; tail -n 80 "$f"; done
+          cat smoke/summary.txt
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage-smoke
+          path: smoke/

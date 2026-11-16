@@ -232,8 +232,8 @@ Expected artifacts:
 - `ForgePilot-<version>-win-x64.exe`
 - `ForgePilot-<version>-mac-x64.dmg`
 - `ForgePilot-<version>-mac-arm64.dmg`
-- `ForgePilot-<version>-linux-x64.AppImage`
-- `ForgePilot-<version>-linux-x64.deb`
+- `ForgePilot-<version>-x86_64.AppImage`
+- `ForgePilot-<version>-linux-amd64.deb`
 
 ## Native Release Automation
 
